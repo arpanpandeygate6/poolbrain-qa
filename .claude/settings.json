@@ -1,0 +1,35 @@
+{
+  "disableClaudeAiConnectors": true,
+  "permissions": {
+    "deny": [
+      "mcp__claude_ai_Atlassian_Rovo",
+      "mcp__claude_ai_Slack",
+      "mcp__claude_ai_Gmail",
+      "mcp__claude_ai_Google_Drive",
+      "mcp__claude_ai_Google_Calendar",
+      "mcp__claude_ai_Claude_Docs",
+      "mcp__claude_ai_Gamma",
+      "mcp__claude_ai_Shopify",
+      "mcp__claude_ai_timelens",
+      "mcp__claude_ai_yogis_agent",
+      "mcp__claude_ai_21st",
+      "mcp__claude_ai_Canva",
+      "mcp__claude_ai_HubSpot",
+      "mcp__claude_ai_Notion",
+      "mcp__claude_ai_OpenAI",
+      "WebFetch",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Read(**/.env)",
+      "Read(**/.env.uat)",
+      "Read(**/.env.preprod)",
+      "Read(**/.env.prod)",
+      "Read(**/.env.npp)",
+      "Edit(**/.env)",
+      "Edit(**/.env.uat)",
+      "Edit(**/.env.preprod)",
+      "Edit(**/.env.prod)",
+      "Edit(**/.env.npp)"
+    ]
+  }
+}

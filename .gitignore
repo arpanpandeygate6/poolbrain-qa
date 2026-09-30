@@ -28,6 +28,7 @@ allure-report/
 playwright/.cache/
 playwright/.auth/
 
-# BMAD: personal settings (team settings in _bmad/ are committed)
-_bmad/config.user.toml
-_bmad/custom/config.user.toml
+# BMAD Method: local only (framework, generated docs and skills)
+_bmad/
+_bmad-output/
+.claude/skills/bmad-*/

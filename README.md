@@ -59,7 +59,7 @@ Traces, screenshots and videos are kept for failed tests. Reports are written to
 
 ## BMAD Method
 
-[BMAD Method](https://bmadcode.com/) v6.12.0 (the `bmm` module) is installed for Claude Code.
+[BMAD Method](https://bmadcode.com/) v6.12.0 (the `bmm` module) is used locally with Claude Code and is not committed: `_bmad/`, `_bmad-output/` and `.claude/skills/bmad-*` are gitignored. To install it in your clone, run `npx bmad-method@6.12.0 install --directory . --modules bmm --tools claude-code`.
 
 - `_bmad/` holds the framework and its config.
 - `.claude/skills/bmad-*` holds the 29 BMAD skills, such as `bmad-help`, `bmad-prd`, `bmad-architecture` and `bmad-qa-generate-e2e-tests`.
