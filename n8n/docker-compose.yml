@@ -1,0 +1,64 @@
+# n8n for the PoolBrain QA prototype (Story 5.1, adapted to run on a laptop).
+#
+# n8n Community Edition with PostgreSQL, both pinned to exact versions.
+# The editor is bound to 127.0.0.1 only: nothing outside this computer can
+# reach it, and there is no public URL, tunnel or port forward. n8n only makes
+# outbound connections (to Jira, GitHub and Slack).
+#
+# Secrets come from n8n/.env (gitignored), created by ./setup.sh.
+# Start:  cd n8n && docker compose up -d     Editor: http://localhost:5678
+
+name: poolbrain-n8n
+
+services:
+  postgres:
+    image: postgres:17.11
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?run ./setup.sh first}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ./setup.sh first}
+      POSTGRES_DB: ${POSTGRES_DB:?run ./setup.sh first}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # No ports: only n8n, on the private Compose network, can reach the database.
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.41.5
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+      # Encrypts stored credentials. Keep a copy outside this computer's n8n
+      # data and backups (for example a password manager): without it, a
+      # backup's credentials can't be decrypted.
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?run ./setup.sh first}
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      # Times in files, logs and cron are UTC (AR-19); Slack messages show IST.
+      GENERIC_TIMEZONE: UTC
+      TZ: UTC
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+    volumes:
+      - n8n-data:/home/node/.n8n
+
+volumes:
+  postgres-data:
+  n8n-data:

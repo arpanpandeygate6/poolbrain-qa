@@ -7,6 +7,7 @@ poolbrain-qa/
 ├── .github/workflows/  ci (secret-free checks), mock-tests (tests on every PR), uat-pr ("Run UAT tests" button)
 ├── .github/actions/    Shared steps: start the pretend site, build and upload the test report
 ├── mock-poolbrain/     Pretend PoolBrain (login page and API) while there is no UAT access
+├── n8n/                n8n + PostgreSQL in Docker, backups and restore drill; workflows/ for exported JSON
 ├── docs/runbook.md     Decisions and procedures (GitHub plan, merge gate)
 ├── api-tests/          Python + pytest: API tests and read-replica SQL checks
 │   ├── config.py       Environment selection and settings (uat, preprod, prod, npp)
@@ -102,6 +103,16 @@ Tests are named by a canonical test ID, used in the inventory and quarantine fil
 ## PR checks (`ci`)
 
 To run the tests for a PR on GitHub, use the "Run UAT tests" button (`uat-pr`); see [docs/runbook.md](docs/runbook.md). Every pull request to `main` runs the `ci` check: Python lint (`ruff check .`), the flow-tag check and its tests, pytest collection (no tests run) and the TypeScript type check. It uses no secrets. How merges are gated depends on the GitHub plan; see [docs/runbook.md](docs/runbook.md).
+
+## n8n
+
+n8n connects Jira, GitHub and Slack. For the prototype, it runs in Docker Desktop on a laptop and is reachable only at http://localhost:5678.
+
+```bash
+cd n8n && ./setup.sh && docker compose up -d
+```
+
+Setup, two-factor login, backups and the restore drill are described in [docs/runbook.md](docs/runbook.md#n8n-story-51-prototype-on-a-laptop). Exported workflows go in `n8n/workflows/` as JSON with no credentials.
 
 ## BMAD Method
 
