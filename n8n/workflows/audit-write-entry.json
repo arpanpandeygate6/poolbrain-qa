@@ -55,7 +55,7 @@
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "INSERT INTO audit.audit_log (actor, actor_type, action, target, link)\nVALUES ($1, $2, $3, coalesce($4, ''), coalesce($5, ''))\nRETURNING id, ts;",
+        "query": "INSERT INTO audit.audit_log (actor, actor_type, action, target, link)\nVALUES ($1, $2, $3, coalesce($4, ''), coalesce($5, ''))\n-- A run already recorded is skipped (unique index audit_log_run_once).\nON CONFLICT DO NOTHING\nRETURNING id, ts;",
         "options": {
           "queryReplacement": "={{ [$json.actor, $json.actor_type, $json.action, $json.target || '', $json.link || ''] }}"
         }

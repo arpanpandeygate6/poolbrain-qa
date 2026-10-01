@@ -136,7 +136,7 @@ Never run `docker compose down -v`: `-v` deletes the data volumes.
 | Connection | n8n credential | Status |
 |---|---|---|
 | Slack app "QA Bot" | QA Bot (Slack) | **Waiting** for a QA Slack channel the bot can be invited to |
-| GitHub App `qa-relay` | qa-relay (GitHub) | In progress |
+| GitHub App `qa-relay` (named `poolbrain-qa-relay` on GitHub) | qa-relay | Done 1 Oct 2026; checked: it sees only this repository and can read runs and variables |
 | Jira | (not yet) | Waiting for an API token |
 
 **Slack.** Create the app from `n8n/slack-app-manifest.yaml` (https://api.slack.com/apps → Create New App → From a manifest). It has exactly the bot scopes `chat:write`, `reactions:read`, `channels:history`, `groups:history`, `usergroups:read`, `users:read`, `users:read.email` and `files:write`, with no events, slash commands or interactivity (n8n polls Slack). Invite the bot only to the QA channel. The bot token goes only into the n8n credential.
@@ -164,7 +164,38 @@ Every n8n workflow writes audit entries only by calling that sub-workflow, with 
 
 **After a restore,** run `n8n/audit-setup.sh` again: database users are not part of the backup, so it recreates `audit_writer` and its grants.
 
-**Still to build:**
+**Run recorder.** The n8n workflow "Audit: record GitHub runs" (`n8n/workflows/audit-record-github-runs.json`) runs every 10 minutes.
 
-- the recorder that adds one entry per completed GitHub run (needs the `qa-relay` connection);
-- the W0 error handler that alerts in Slack (needs the Slack app).
+- It adds one entry per completed run of `draft-cases`, `generate-tests`, `triage`, `quarantine`, `nightly`, `smoke` and `uat-pr`, plus `mock-tests` while it stands in for `nightly`.
+- Each entry records the actor as `agent:<workflow>` or `ci:<workflow>`, the action as `run-<conclusion>` (for example `run-success`), and the run link.
+- Workflows that don't exist yet are skipped without error.
+- It keeps its own checkpoint in `audit.checkpoints` and looks back one day before it, so runs that finished while n8n was down are recorded when it returns.
+- A unique index on the run link means a run is never recorded twice. Checked on 1 Oct 2026: a second pass over the same three runs added nothing.
+
+**Still to build:** the W0 error handler that alerts in Slack. It needs the Slack app.
+
+## Heartbeat (Story 5.4)
+
+n8n can't report its own death, so two sides work together:
+
+- **W5 Heartbeat** (n8n, `n8n/workflows/w5-heartbeat.json`) runs every hour and sets the repository variable `N8N_HEARTBEAT_AT` to the current UTC time. It is the only writer of that variable, and it runs even when `AGENT_ENABLED` is off.
+- **heartbeat-watch** (GitHub Actions, `.github/workflows/heartbeat-watch.yml`) runs every hour at :23 UTC. If `N8N_HEARTBEAT_AT` is more than 2 hours old, missing or unreadable, the run fails and its job summary shows the alert. GitHub emails the repository owner about the failed run. It alerts at most once every 6 hours per outage, and the next W5 run clears it. It reads variables only and holds no secret.
+
+**Slack, later.** Once the Slack app and the `notify` Environment exist (or, on GitHub Free, once the team agrees where the webhook is kept), add `environment: notify` to the job and pass `SLACK_WEBHOOK_URL` to the check step. `scripts/heartbeat_check.py` already posts to Slack when that variable is set.
+
+**Check it.** In GitHub, **Settings → Secrets and variables → Actions → Variables** shows `N8N_HEARTBEAT_AT`. To test an outage, stop n8n (`cd n8n && docker compose stop`) and run heartbeat-watch by hand after more than 2 hours, then start n8n again.
+
+**Note.** GitHub turns off scheduled workflows in a repository with no activity for 60 days. If that happens, re-enable heartbeat-watch on the Actions tab.
+
+## n8n workflows in this repository
+
+`n8n/workflows/` holds each workflow as JSON, with credentials referenced only by ID and name. To install or update one:
+
+```bash
+cd n8n
+docker compose exec -T n8n sh -c 'cat > /tmp/w.json && n8n import:workflow --input=/tmp/w.json; rm -f /tmp/w.json' < workflows/<file>.json
+docker compose run --rm --no-deps -T n8n publish:workflow --id=<id from the file>
+docker compose restart n8n
+```
+
+On another n8n instance, fix the credential IDs in the editor after importing.

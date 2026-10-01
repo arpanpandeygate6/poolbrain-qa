@@ -37,3 +37,16 @@ REVOKE ALL ON SCHEMA audit FROM PUBLIC;
 REVOKE ALL ON audit.audit_log FROM PUBLIC, audit_writer;
 GRANT USAGE ON SCHEMA audit TO audit_writer;
 GRANT INSERT, SELECT ON audit.audit_log TO audit_writer;
+
+-- One entry per completed GitHub run (Story 5.3 recorder): a run's link is
+-- recorded at most once, so the recorder can safely look back after downtime.
+CREATE UNIQUE INDEX IF NOT EXISTS audit_log_run_once ON audit.audit_log (link) WHERE action LIKE 'run-%';
+
+-- Checkpoints that polling workflows keep for themselves (not audit entries,
+-- so they may be updated).
+CREATE TABLE IF NOT EXISTS audit.checkpoints (
+    name  text PRIMARY KEY,
+    value timestamptz NOT NULL
+);
+REVOKE ALL ON audit.checkpoints FROM PUBLIC, audit_writer;
+GRANT SELECT, INSERT, UPDATE ON audit.checkpoints TO audit_writer;
