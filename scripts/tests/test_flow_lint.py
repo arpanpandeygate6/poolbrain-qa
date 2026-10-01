@@ -1,6 +1,7 @@
 """Tests for the flow-tag linter. Each test builds a small repo in a temp folder
 and runs the real pytest and Playwright collection against it."""
 
+import json
 import shutil
 import textwrap
 from pathlib import Path
@@ -225,3 +226,20 @@ def test_unregistered_marker_is_a_collection_failure(repo, capsys):
 
 def test_real_inventory_is_valid():
     assert flow_lint.load_inventory(REPO / "flows" / "inventory.yaml") == ["login", "job-creation"]
+
+
+@needs_playwright
+def test_json_output_lists_every_test(repo, capsys, tmp_path):
+    write(repo / "api-tests/tests/test_x.py", """
+        import pytest
+
+        @pytest.mark.flow("login")
+        @pytest.mark.skip(reason="later")
+        def test_a():
+            pass
+    """)
+    out = tmp_path / "tests.json"
+    assert flow_lint.main(["--root", str(repo), "--json", str(out)]) == 0
+    assert json.loads(out.read_text()) == [
+        {"test_id": "api:tests/test_x.py::test_a", "suite": "api", "flows": ["login"], "status": "skipped"}
+    ]

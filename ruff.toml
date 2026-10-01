@@ -2,4 +2,4 @@
 line-length = 120
 target-version = "py314"
 extend-exclude = ["_bmad", "_bmad-output"]
-src = ["api-tests", "scripts"]
+src = ["api-tests", "scripts", "mock-poolbrain"]

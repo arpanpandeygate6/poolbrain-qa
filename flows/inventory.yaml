@@ -42,4 +42,11 @@ flows:
     rules:
       - id: JOB-1
         description: A job created for a customer is saved with the entered details.
-        tests: []
+        tests:
+          - api:tests/test_job_creation.py::test_api_job_is_saved_with_entered_details
+          - ui:tests/job-creation.spec.ts > Job creation > office admin creates a job
+      - id: JOB-2
+        description: A new job starts with the status "Scheduled".
+        tests:
+          - api:tests/test_job_creation.py::test_api_job_is_saved_with_entered_details
+          - ui:tests/job-creation.spec.ts > Job creation > office admin creates a job

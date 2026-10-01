@@ -4,9 +4,9 @@ Automated regression tests for PoolBrain. Following approach B from the PRD, bus
 
 ```
 poolbrain-qa/
-├── .github/workflows/  ci (secret-free checks), mock-tests (tests on every PR), uat-pr ("Run UAT tests" button)
+├── .github/workflows/  ci, mock-tests, uat-pr ("Run UAT tests" button), nightly, heartbeat-watch
 ├── .github/actions/    Shared steps: start the pretend site, build and upload the test report
-├── mock-poolbrain/     Pretend PoolBrain (login page and API) while there is no UAT access
+├── mock-poolbrain/     Pretend PoolBrain (login, jobs, MySQL) while there is no UAT access
 ├── n8n/                n8n + PostgreSQL in Docker, backups and restore drill; workflows/ for exported JSON
 ├── docs/runbook.md     Decisions and procedures (GitHub plan, merge gate)
 ├── api-tests/          Python + pytest: API tests and read-replica SQL checks
@@ -22,26 +22,27 @@ poolbrain-qa/
 ├── flows/
 │   ├── inventory.yaml  Business flows: the only place flow IDs are defined
 │   └── quarantine.yaml Quarantined tests (owner, Jira key, deadline)
-└── scripts/            Flow-tag linter and its tests
+└── scripts/            Flow-tag linter, run summary, coverage, uat-pr check, heartbeat check, and their tests
 ```
 
 ## Pretend PoolBrain (no UAT access yet)
 
-Until we have UAT access, the tests run against `mock-poolbrain/`, a small Flask app with a PoolBrain-style login page and login API. It proves the test setup works; it does not test PoolBrain itself. Its API path and response fields are a best guess, to be corrected against real UAT.
+Until we have UAT access, the tests run against `mock-poolbrain/`, a small Flask app with PoolBrain-style screens and API: login, a job list and a new-job form. It is backed by MySQL in Docker, so the database checks work as they will on UAT's read replica. It proves the test setup works; it does not test PoolBrain itself. Its API paths, fields and screens are a best guess, to be corrected against real UAT.
 
 1. In `api-tests/.env.uat` and `ui-tests/.env.uat` (copied from `.env.example`), set:
    - `API_BASE_URL=http://127.0.0.1:5050/api` and `BASE_URL=http://127.0.0.1:5050`
    - any made-up `OFFICE_ADMIN_EMAIL` / `OFFICE_ADMIN_PASSWORD` and `API_USER_EMAIL` / `API_USER_PASSWORD`. The pretend site accepts whatever you set here.
-2. Start it, and leave the terminal open:
+   - in `api-tests/.env.uat` only: `DB_HOST=127.0.0.1`, `DB_PORT=3307`, `DB_NAME=poolbrain`, `DB_USER=qa_readonly`, and any `DB_PASSWORD`. The pretend site creates that read-only user.
+2. With Docker Desktop running, start it and leave the terminal open:
    ```bash
    api-tests/.venv/bin/pip install -r mock-poolbrain/requirements.txt   # once
-   api-tests/.venv/bin/python mock-poolbrain/app.py                     # http://127.0.0.1:5050/login
+   mock-poolbrain/start.sh                                              # http://127.0.0.1:5050/login
    ```
 3. Run the suites in another terminal, as below.
 
-To switch to real UAT later, change the URLs and accounts in the two `.env.uat` files and check `LOGIN_PATH` in `api-tests/utils/api_client.py` and the locators in `ui-tests/pages/LoginPage.ts`.
+To switch to real UAT later, change the URLs, accounts and database settings in the two `.env.uat` files. Then check `LOGIN_PATH` and the job endpoints in `api-tests/utils/api_client.py`, the locators in `ui-tests/pages/`, and the seeded customer name in `ui-tests/tests/job-creation.spec.ts`.
 
-On GitHub, the `mock-tests` workflow does all of this on every PR with freshly made-up passwords, and uploads the reports.
+On GitHub, the `mock-tests`, `uat-pr` and `nightly` workflows do all of this with freshly made-up passwords.
 
 ## Environments
 
@@ -62,6 +63,8 @@ pip install -r requirements.txt
 pytest                      # UAT, all tests
 CI=true pytest -m smoke --env prod  # read-only smoke on PROD (CI only; refused locally)
 ```
+
+Helpers for test code: `ApiClient` (including `login`, `customers`, `create_job` and `get_job`), `ReadReplica.wait_for_row` (retries a SELECT until the row appears; timeouts are set in `config.py`), and `utils/naming.qa_auto_name` for test data (`qa-auto-<run-id>-<name>`). The helpers' own tests are in `api-tests/unit/` (`pytest unit`).
 
 Markers:
 
@@ -129,6 +132,6 @@ If you're not sure where to start, ask Claude Code to run the `bmad-help` skill.
 ## Not set up yet
 
 - PoolBrain tests against real UAT (only the two login tests exist, run against the pretend site)
-- Nightly and smoke workflows, and branch protection on `main` (not available on GitHub Free)
+- The smoke workflow, the Slack failure list, and branch protection on `main` (not available on GitHub Free)
 - Seeded test data
 - The QA lead's name, flow owners and confirmed business rules in `flows/inventory.yaml` (currently `TBD` and drafts)

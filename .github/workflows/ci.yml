@@ -55,6 +55,10 @@ jobs:
         working-directory: scripts
         run: python -m pytest
 
+      - name: Test helper unit tests
+        working-directory: api-tests
+        run: python -m pytest unit -p no:cacheprovider
+
       - name: Collect API tests (no test runs)
         working-directory: api-tests
         # Exit code 5 means "no tests collected", which is fine while the suite is empty.

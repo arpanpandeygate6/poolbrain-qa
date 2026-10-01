@@ -1,0 +1,23 @@
+# MySQL for the pretend PoolBrain (stands in for UAT's database and read replica).
+# Bound to 127.0.0.1:3307 only. The root password comes from mock-poolbrain/.env
+# (created by start.sh, gitignored). Started by ./start.sh.
+name: mock-poolbrain
+
+services:
+  mysql:
+    image: mysql:8.4.11
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MOCK_DB_ROOT_PASSWORD:?run ./start.sh}
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+volumes:
+  mysql-data:
