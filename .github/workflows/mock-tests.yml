@@ -1,6 +1,7 @@
 # Runs the API and UI suites against the pretend PoolBrain (mock-poolbrain/)
-# while there is no UAT access. Uses no secrets: the test accounts are made up
-# fresh for each run. Replaced by `uat-pr` once the suites point at real UAT.
+# on every PR while there is no UAT access. Uses no secrets: test accounts are
+# made up fresh for each run. Replaced by `uat-pr` once the suites point at
+# real UAT.
 name: mock-tests
 
 on:
@@ -22,10 +23,6 @@ jobs:
     timeout-minutes: 20
     env:
       POOLBRAIN_ENV: uat
-      API_BASE_URL: http://127.0.0.1:5050/api
-      BASE_URL: http://127.0.0.1:5050
-      OFFICE_ADMIN_EMAIL: office.admin@example.test
-      API_USER_EMAIL: api.user@example.test
     steps:
       - uses: actions/checkout@v5
         with:
@@ -47,42 +44,45 @@ jobs:
 
       - name: Install packages and browser
         run: |
-          pip install -r api-tests/requirements.txt -r mock-poolbrain/requirements.txt
+          pip install -r api-tests/requirements.txt
           cd ui-tests && npm ci && npx playwright install --with-deps chromium
 
-      - name: Make up test account passwords for this run
-        run: |
-          password="$(openssl rand -hex 16)"
-          echo "::add-mask::$password"
-          echo "OFFICE_ADMIN_PASSWORD=$password" >> "$GITHUB_ENV"
-          echo "API_USER_PASSWORD=$password" >> "$GITHUB_ENV"
-
       - name: Start the pretend PoolBrain
-        run: |
-          python mock-poolbrain/app.py > mock-poolbrain.log 2>&1 &
-          for i in $(seq 1 30); do
-            python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/api/health')" && exit 0
-            sleep 1
-          done
-          echo "The pretend PoolBrain did not start:"; cat mock-poolbrain.log; exit 1
+        uses: ./.github/actions/start-mock-poolbrain
 
       - name: API tests
+        id: api
+        continue-on-error: true
         working-directory: api-tests
         run: python -m pytest
 
       - name: UI tests
+        id: ui
         if: ${{ !cancelled() }}
+        continue-on-error: true
         working-directory: ui-tests
         run: npx playwright test
 
-      - name: Upload test reports
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+      - name: Test report
+        id: report
+        if: always()
+        uses: ./.github/actions/test-report
         with:
-          name: mock-tests-reports-${{ github.run_id }}
-          retention-days: 30
-          if-no-files-found: ignore
-          path: |
-            api-tests/reports/
-            ui-tests/reports/
-            ui-tests/test-results/
+          name: mock-tests
+
+      - name: Job summary
+        id: summary
+        if: always()
+        run: |
+          outcome=failure
+          if [ "${{ steps.api.outcome }}" = success ] && [ "${{ steps.ui.outcome }}" = success ]; then outcome=success; fi
+          python scripts/run_summary.py --title mock-tests --outcome "$outcome" \
+            --detail "Commit=\`${{ github.event.pull_request.head.sha || github.sha }}\`" \
+            --detail "Time=$(TZ=Asia/Kolkata date '+%d %b %Y %H:%M IST')" \
+            --report-url "${{ steps.report.outputs.report-url }}" \
+            --suite API=api-tests/reports/allure-results \
+            --suite UI=ui-tests/reports/allure-results
+
+      - name: Fail the check when tests failed
+        if: always() && steps.summary.outputs.verdict != 'passed'
+        run: exit 1

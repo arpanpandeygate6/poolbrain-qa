@@ -40,8 +40,42 @@ Then check it once:
 
 GitHub does not enforce this; the team does.
 
-- Merge a PR only when `ci` is green and one QA member, not the author, has approved it.
-- Before approving, the reviewer runs the UAT tests for the PR on their laptop with `.env.uat`.
+- Merge a PR only when `ci` and `mock-tests` are green and one QA member, not the author, has approved it.
+- Before approving, the reviewer runs the UAT tests for the PR: with the "Run UAT tests" button below, or on their laptop with `.env.uat`. Merge only when `uat-pr` is green on the PR's latest commit.
+
+## "Run UAT tests" button: `uat-pr` (Story 1.5)
+
+To run the tests for a PR you reviewed:
+
+1. On the PR's **Commits** tab, copy the full SHA of the latest commit.
+2. Go to **Actions → uat-pr → Run workflow**, keep "Use workflow from" on `main`, paste the SHA and click **Run workflow**.
+3. The PR shows a `uat-pr` check: pending while it runs, then green or red. A new commit on the PR needs a new run; the earlier result doesn't cover it.
+
+The first job refuses the request, without running any PR code, unless all of these hold. The job summary says why and how to fix it.
+
+- You are listed in `.github/qa-team.txt` on `main`.
+- You are a person, not an app or bot.
+- The SHA is the head of an open PR to `main`.
+- For a PR opened by the `qa-agent` app, you approved the PR at that commit.
+
+**Who can press it.** `.github/qa-team.txt` lists the QA team, one GitHub username per line. Adding or removing a QA member means a PR to that file that another QA member approves.
+
+**Free plan and the pretend site.** The test job has no `uat-pr` Environment yet: private repositories on GitHub Free have no Environments, and the tests run against the pretend PoolBrain, which needs no credentials. When UAT access arrives on a plan with Environments:
+
+1. Create the `uat-pr` Environment, allow only `main` to deploy to it, and add the UAT values.
+2. In `.github/workflows/uat-pr.yml`, add `environment: uat-pr` to the `tests` job and replace the "Start the pretend PoolBrain" step.
+3. On Team or higher, make `uat-pr` a required check next to `ci`.
+
+## Test reports (Story 1.6)
+
+Every test run uploads two artifacts, kept for 30 days:
+
+- `<workflow>-allure-report-<run>`: one combined Allure report for both suites. Download it, unzip it and open `index.html`; no server is needed.
+- `<workflow>-test-output-<run>`: raw results, the Playwright HTML report, and screenshots, videos and traces of failed UI tests.
+
+The job summary links to the report. The report step (`.github/actions/test-report`) runs even when tests fail or are cancelled, and says "no results" when there are none. New workflows (`nightly`, `smoke`) reuse it rather than copying it.
+
+The Allure version is pinned in two places, which must match: `ui-tests/package.json` and `.github/actions/test-report/action.yml`.
 
 ## Tool versions and dependency updates (Story 1.3, AR-16)
 

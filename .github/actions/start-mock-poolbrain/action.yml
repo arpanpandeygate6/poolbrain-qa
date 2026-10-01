@@ -1,0 +1,35 @@
+name: Start the pretend PoolBrain
+description: >-
+  Makes up test accounts for this run, points both suites at the pretend
+  PoolBrain (mock-poolbrain/) and starts it in the background.
+inputs:
+  tools-path:
+    description: Folder that holds mock-poolbrain/ (a checkout of main)
+    default: .
+runs:
+  using: composite
+  steps:
+    - name: Make up test accounts for this run
+      shell: bash
+      run: |
+        password="$(openssl rand -hex 16)"
+        echo "::add-mask::$password"
+        {
+          echo "API_BASE_URL=http://127.0.0.1:5050/api"
+          echo "BASE_URL=http://127.0.0.1:5050"
+          echo "OFFICE_ADMIN_EMAIL=office.admin@example.test"
+          echo "OFFICE_ADMIN_PASSWORD=$password"
+          echo "API_USER_EMAIL=api.user@example.test"
+          echo "API_USER_PASSWORD=$password"
+        } >> "$GITHUB_ENV"
+
+    - name: Start the pretend PoolBrain
+      shell: bash
+      run: |
+        pip install -q -r "${{ inputs.tools-path }}/mock-poolbrain/requirements.txt"
+        python "${{ inputs.tools-path }}/mock-poolbrain/app.py" > "$RUNNER_TEMP/mock-poolbrain.log" 2>&1 &
+        for i in $(seq 1 30); do
+          python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/api/health')" 2>/dev/null && exit 0
+          sleep 1
+        done
+        echo "The pretend PoolBrain did not start:"; cat "$RUNNER_TEMP/mock-poolbrain.log"; exit 1

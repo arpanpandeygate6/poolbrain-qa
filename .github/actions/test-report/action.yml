@@ -1,0 +1,57 @@
+name: Test report
+description: >-
+  Combines the API and UI suites' Allure results into one report and uploads
+  it, plus the raw results, Playwright HTML report, screenshots and traces,
+  kept for 30 days (Story 1.6). Run it with `if: always()` so it also runs
+  after failed or cancelled tests.
+inputs:
+  name:
+    description: Artifact name prefix, normally the workflow name
+    required: true
+outputs:
+  report-url:
+    description: Link to the Allure report artifact (empty when there were no results)
+    value: ${{ steps.upload-report.outputs.artifact-url }}
+  has-results:
+    description: "'true' when at least one suite produced results"
+    value: ${{ steps.generate.outputs.has-results }}
+runs:
+  using: composite
+  steps:
+    - name: Build the combined Allure report
+      id: generate
+      shell: bash
+      run: |
+        dirs=()
+        for dir in api-tests/reports/allure-results ui-tests/reports/allure-results; do
+          if [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then dirs+=("$dir"); fi
+        done
+        if [ ${#dirs[@]} -eq 0 ]; then
+          echo "has-results=false" >> "$GITHUB_OUTPUT"
+          echo "Allure report: no results" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        # Pinned to match ui-tests/package.json; run with npx so it works for any checked-out commit.
+        npx --yes allure@3.19.1 generate --config "${{ github.action_path }}/allurerc.mjs" \
+          -o reports/allure-report "${dirs[@]}"
+        echo "has-results=true" >> "$GITHUB_OUTPUT"
+
+    - name: Upload the Allure report
+      id: upload-report
+      if: steps.generate.outputs.has-results == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.name }}-allure-report-${{ github.run_id }}-${{ github.run_attempt }}
+        path: reports/allure-report/
+        retention-days: 30
+
+    - name: Upload raw results, Playwright report, screenshots and traces
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.name }}-test-output-${{ github.run_id }}-${{ github.run_attempt }}
+        retention-days: 30
+        if-no-files-found: ignore
+        path: |
+          api-tests/reports/allure-results/
+          ui-tests/reports/
+          ui-tests/test-results/
