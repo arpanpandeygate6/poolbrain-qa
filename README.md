@@ -112,7 +112,7 @@ n8n connects Jira, GitHub and Slack. For the prototype, it runs in Docker Deskto
 cd n8n && ./setup.sh && docker compose up -d
 ```
 
-Setup, two-factor login, backups and the restore drill are described in [docs/runbook.md](docs/runbook.md#n8n-story-51-prototype-on-a-laptop). Exported workflows go in `n8n/workflows/` as JSON with no credentials.
+Setup, two-factor login, backups and the restore drill are described in [docs/runbook.md](docs/runbook.md#n8n-story-51-prototype-on-a-laptop). Exported workflows go in `n8n/workflows/` as JSON with no credentials. The audit log is set up with `n8n/audit-setup.sh`.
 
 ## BMAD Method
 
