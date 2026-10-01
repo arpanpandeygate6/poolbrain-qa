@@ -1,0 +1,85 @@
+{
+  "id": "auditWriteEntry1",
+  "name": "Audit: write entry",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Audit entry",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "actor",
+              "type": "string"
+            },
+            {
+              "name": "actor_type",
+              "type": "string"
+            },
+            {
+              "name": "action",
+              "type": "string"
+            },
+            {
+              "name": "target",
+              "type": "string"
+            },
+            {
+              "name": "link",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-4000-8000-000000000002",
+      "name": "Insert into audit log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit.audit_log (actor, actor_type, action, target, link)\nVALUES ($1, $2, $3, coalesce($4, ''), coalesce($5, ''))\nRETURNING id, ts;",
+        "options": {
+          "queryReplacement": "={{ [$json.actor, $json.actor_type, $json.action, $json.target || '', $json.link || ''] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Audit entry": {
+      "main": [
+        [
+          {
+            "node": "Insert into audit log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

@@ -110,7 +110,7 @@ Then:
 
 | Date | Account | 2FA on | Checked by |
 |---|---|---|---|
-| | | | |
+| 2026-10-01 | Owner (n8n maintainer, prototype) | yes | n8n database check, confirmed by the maintainer |
 
 **Backups.** `n8n/backup.sh` dumps the database (workflows, encrypted credentials, executions, audit log) to `BACKUP_DIR` (default `~/n8n-backups`, outside the Docker volumes) and deletes backups older than 30 days. If it fails, it shows a macOS notification and logs to `~/Library/Logs/n8n-backup.log`. Run `n8n/schedule-backup.sh` once to schedule it nightly at 02:00; if the Mac is asleep then, it runs on wake. On a real server, `BACKUP_DIR` must be an office file share that is not on the n8n host.
 
@@ -130,3 +130,41 @@ docker compose logs -f n8n   # watch the logs
 ```
 
 Never run `docker compose down -v`: `-v` deletes the data volumes.
+
+## n8n connections (Story 5.2)
+
+| Connection | n8n credential | Status |
+|---|---|---|
+| Slack app "QA Bot" | QA Bot (Slack) | **Waiting** for a QA Slack channel the bot can be invited to |
+| GitHub App `qa-relay` | qa-relay (GitHub) | In progress |
+| Jira | (not yet) | Waiting for an API token |
+
+**Slack.** Create the app from `n8n/slack-app-manifest.yaml` (https://api.slack.com/apps → Create New App → From a manifest). It has exactly the bot scopes `chat:write`, `reactions:read`, `channels:history`, `groups:history`, `usergroups:read`, `users:read`, `users:read.email` and `files:write`, with no events, slash commands or interactivity (n8n polls Slack). Invite the bot only to the QA channel. The bot token goes only into the n8n credential.
+
+**GitHub App `qa-relay`.** It is installed only on this repository, with webhooks off, and has these repository permissions: Actions read and write, Contents read, Issues read and write, Pull requests read, Variables read and write. Its private key goes only into the n8n credential (type "GitHub App API"); afterwards, delete the downloaded `.pem` or move it to a password manager.
+
+**Updates and rotation (AR-16).** The n8n maintainer owns both:
+
+- Once a month, update n8n, PostgreSQL and Docker Desktop: bump the pinned versions in `n8n/docker-compose.yml` through a PR, take a backup, run `docker compose up -d`, then run the restore drill.
+- Once a year, or at once if exposed, rotate the `qa-relay` private key, the Slack bot token, the heartbeat webhook, the Jira token, the database users' passwords and the audit writer's password.
+
+## Audit log (Story 5.3)
+
+One append-only table, `audit.audit_log` in n8n's PostgreSQL, records every agent run, n8n action and QA decision. Its columns are `ts` (UTC), `actor`, `actor_type` (`human`, `agent`, `n8n` or `ci`), `action`, `target` and `link`. `actor` is an email for humans, and `agent:<workflow>`, `ci:<workflow>` or `n8n:<workflow>` otherwise; the database rejects any other form.
+
+**Setup:** run `n8n/audit-setup.sh`; it is safe to run again. It:
+
+- creates the table and the `audit_writer` database user;
+- adds the n8n credential "Audit log (Postgres)";
+- installs and publishes the shared sub-workflow "Audit: write entry" (`n8n/workflows/audit-write-entry.json`).
+
+Every n8n workflow writes audit entries only by calling that sub-workflow, with the inputs `actor`, `actor_type`, `action`, `target` and `link`.
+
+**Append-only.** `audit_writer` can INSERT and SELECT only. Checked on 1 Oct 2026: as `audit_writer`, UPDATE, DELETE and TRUNCATE are refused with "permission denied", and badly formed actors are rejected.
+
+**After a restore,** run `n8n/audit-setup.sh` again: database users are not part of the backup, so it recreates `audit_writer` and its grants.
+
+**Still to build:**
+
+- the recorder that adds one entry per completed GitHub run (needs the `qa-relay` connection);
+- the W0 error handler that alerts in Slack (needs the Slack app).
