@@ -12,6 +12,14 @@ if (process.env.CI !== 'true') {
   dotenv.config({ path: path.resolve(__dirname, '.env.uat'), quiet: true });
 }
 
+// Role test accounts. Specs read credentials from here, never from process.env.
+export const accounts = {
+  officeAdmin: {
+    email: process.env.OFFICE_ADMIN_EMAIL ?? '',
+    password: process.env.OFFICE_ADMIN_PASSWORD ?? '',
+  },
+};
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,

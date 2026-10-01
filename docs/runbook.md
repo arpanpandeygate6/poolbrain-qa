@@ -4,7 +4,7 @@ Decisions and procedures that are not visible in the code. Each section names th
 
 ## GitHub plan (Story 1.3, AR-32)
 
-**Plan: not confirmed yet.** The QA lead confirms whether the repository is on GitHub Free, Team or Enterprise and records it here, with the date.
+**Plan: GitHub Free** (recorded 1 Oct 2026). The repository is private and belongs to a company-provided GitHub account, not a company organization. The merge gate is therefore the team procedure below.
 
 The plan decides how the merge gate works:
 

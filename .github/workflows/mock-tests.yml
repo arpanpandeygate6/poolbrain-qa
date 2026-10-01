@@ -1,0 +1,88 @@
+# Runs the API and UI suites against the pretend PoolBrain (mock-poolbrain/)
+# while there is no UAT access. Uses no secrets: the test accounts are made up
+# fresh for each run. Replaced by `uat-pr` once the suites point at real UAT.
+name: mock-tests
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mock-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mock-tests:
+    name: mock-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      POOLBRAIN_ENV: uat
+      API_BASE_URL: http://127.0.0.1:5050/api
+      BASE_URL: http://127.0.0.1:5050
+      OFFICE_ADMIN_EMAIL: office.admin@example.test
+      API_USER_EMAIL: api.user@example.test
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            api-tests/requirements.txt
+            mock-poolbrain/requirements.txt
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: ui-tests/package-lock.json
+
+      - name: Install packages and browser
+        run: |
+          pip install -r api-tests/requirements.txt -r mock-poolbrain/requirements.txt
+          cd ui-tests && npm ci && npx playwright install --with-deps chromium
+
+      - name: Make up test account passwords for this run
+        run: |
+          password="$(openssl rand -hex 16)"
+          echo "::add-mask::$password"
+          echo "OFFICE_ADMIN_PASSWORD=$password" >> "$GITHUB_ENV"
+          echo "API_USER_PASSWORD=$password" >> "$GITHUB_ENV"
+
+      - name: Start the pretend PoolBrain
+        run: |
+          python mock-poolbrain/app.py > mock-poolbrain.log 2>&1 &
+          for i in $(seq 1 30); do
+            python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/api/health')" && exit 0
+            sleep 1
+          done
+          echo "The pretend PoolBrain did not start:"; cat mock-poolbrain.log; exit 1
+
+      - name: API tests
+        working-directory: api-tests
+        run: python -m pytest
+
+      - name: UI tests
+        if: ${{ !cancelled() }}
+        working-directory: ui-tests
+        run: npx playwright test
+
+      - name: Upload test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-tests-reports-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: ignore
+          path: |
+            api-tests/reports/
+            ui-tests/reports/
+            ui-tests/test-results/

@@ -25,6 +25,8 @@ class Settings:
     env: str
     api_base_url: str
     api_token: str
+    api_user_email: str
+    api_user_password: str
     db_host: str
     db_port: int
     db_name: str
@@ -53,6 +55,8 @@ def load_settings(env: str | None = None) -> Settings:
         env=env,
         api_base_url=os.getenv("API_BASE_URL", ""),
         api_token=os.getenv("API_TOKEN", ""),
+        api_user_email=os.getenv("API_USER_EMAIL", ""),
+        api_user_password=os.getenv("API_USER_PASSWORD", ""),
         db_host=os.getenv("DB_HOST", ""),
         db_port=int(os.getenv("DB_PORT", "3306")),
         db_name=os.getenv("DB_NAME", ""),

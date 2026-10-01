@@ -4,7 +4,8 @@ Automated regression tests for PoolBrain. Following approach B from the PRD, bus
 
 ```
 poolbrain-qa/
-├── .github/workflows/  ci.yml: secret-free checks on every PR
+├── .github/workflows/  ci.yml: secret-free checks; mock-tests.yml: tests against the pretend site
+├── mock-poolbrain/     Pretend PoolBrain (login page and API) while there is no UAT access
 ├── docs/runbook.md     Decisions and procedures (GitHub plan, merge gate)
 ├── api-tests/          Python + pytest: API tests and read-replica SQL checks
 │   ├── config.py       Environment selection and settings (uat, preprod, prod, npp)
@@ -21,6 +22,24 @@ poolbrain-qa/
 │   └── quarantine.yaml Quarantined tests (owner, Jira key, deadline)
 └── scripts/            Flow-tag linter and its tests
 ```
+
+## Pretend PoolBrain (no UAT access yet)
+
+Until we have UAT access, the tests run against `mock-poolbrain/`, a small Flask app with a PoolBrain-style login page and login API. It proves the test setup works; it does not test PoolBrain itself. Its API path and response fields are a best guess, to be corrected against real UAT.
+
+1. In `api-tests/.env.uat` and `ui-tests/.env.uat` (copied from `.env.example`), set:
+   - `API_BASE_URL=http://127.0.0.1:5050/api` and `BASE_URL=http://127.0.0.1:5050`
+   - any made-up `OFFICE_ADMIN_EMAIL` / `OFFICE_ADMIN_PASSWORD` and `API_USER_EMAIL` / `API_USER_PASSWORD`. The pretend site accepts whatever you set here.
+2. Start it, and leave the terminal open:
+   ```bash
+   api-tests/.venv/bin/pip install -r mock-poolbrain/requirements.txt   # once
+   api-tests/.venv/bin/python mock-poolbrain/app.py                     # http://127.0.0.1:5050/login
+   ```
+3. Run the suites in another terminal, as below.
+
+To switch to real UAT later, change the URLs and accounts in the two `.env.uat` files and check `LOGIN_PATH` in `api-tests/utils/api_client.py` and the locators in `ui-tests/pages/LoginPage.ts`.
+
+On GitHub, the `mock-tests` workflow does all of this on every PR with freshly made-up passwords, and uploads the reports.
 
 ## Environments
 
@@ -95,7 +114,7 @@ If you're not sure where to start, ask Claude Code to run the `bmad-help` skill.
 
 ## Not set up yet
 
-- PoolBrain tests
+- PoolBrain tests against real UAT (only the two login tests exist, run against the pretend site)
 - CI workflows that run tests (`uat-pr`, nightly, smoke) and branch protection on `main`
 - Seeded test data
 - The QA lead's name, flow owners and confirmed business rules in `flows/inventory.yaml` (currently `TBD` and drafts)
