@@ -1,0 +1,43 @@
+# Business-flow inventory (AD-7).
+#
+# This is the only place flow IDs are defined. Every test names exactly one
+# flow from this file: pytest @pytest.mark.flow("<id>"), Playwright tag
+# @flow:<id>. The flow-tag linter (scripts/flow_lint.py) fails CI on an
+# untagged test or an unknown flow ID. Coverage is counted against this file
+# and flows/quarantine.yaml.
+#
+# Owner of the contents: the QA lead (named in `qa_lead` below). Changes go
+# through a PR the QA lead approves.
+#
+# Fields per flow:
+#   id      kebab-case, unique (for example job-creation)
+#   name    plain-language name
+#   owner   test owner (default owner for quarantine tickets)
+#   layers  where the flow is tested: api, db and/or ui
+#   rules   business rules; each has a short id, a description and `tests`,
+#           the canonical test IDs that assert it:
+#             api:<path under api-tests>::<test name>
+#             ui:<path under ui-tests> > <describe> > <title>
+#
+# The rules below are drafts for the QA lead to confirm.
+
+qa_lead: TBD
+
+flows:
+  - id: login
+    name: Login
+    owner: TBD
+    layers: [api, ui]
+    rules:
+      - id: LOGIN-1
+        description: A role test account signs in with valid credentials.
+        tests: []
+
+  - id: job-creation
+    name: Job creation
+    owner: TBD
+    layers: [api, db, ui]
+    rules:
+      - id: JOB-1
+        description: A job created for a customer is saved with the entered details.
+        tests: []
