@@ -1,0 +1,13 @@
+# Quarantine registry (AD-7, NFR-03).
+#
+# The only place a test is quarantined. A quarantined test still runs nightly
+# but does not gate, and its flow's rules count as not covered. Entries are
+# added and removed only through a QA-merged PR.
+#
+# Fields per entry:
+#   test_id   canonical test ID (api:... or ui:...)
+#   owner     person who fixes the test (default: the flow owner)
+#   jira      Jira key of the fix ticket, for example PM-1234
+#   deadline  YYYY-MM-DD, two weeks after quarantine
+
+[]

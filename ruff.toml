@@ -1,0 +1,5 @@
+# Python lint settings for api-tests/ and scripts/ (run by the `ci` check).
+line-length = 120
+target-version = "py314"
+extend-exclude = ["_bmad", "_bmad-output"]
+src = ["api-tests", "scripts"]

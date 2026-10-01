@@ -4,16 +4,22 @@ Automated regression tests for PoolBrain. Following approach B from the PRD, bus
 
 ```
 poolbrain-qa/
+├── .github/workflows/  ci.yml: secret-free checks on every PR
+├── docs/runbook.md     Decisions and procedures (GitHub plan, merge gate)
 ├── api-tests/          Python + pytest: API tests and read-replica SQL checks
 │   ├── config.py       Environment selection and settings (uat, preprod, prod, npp)
 │   ├── conftest.py     Fixtures (api, db) and the read-only guard
 │   ├── pytest.ini      Markers and default options
 │   ├── utils/          ApiClient (requests) and ReadReplica (SELECT-only SQL)
 │   └── tests/          Tests go here
-└── ui-tests/           Playwright + TypeScript: top 10 UI flows
-    ├── playwright.config.ts
-    ├── pages/          Page objects go here
-    └── tests/          Specs go here
+├── ui-tests/           Playwright + TypeScript: top 10 UI flows
+│   ├── playwright.config.ts
+│   ├── pages/          Page objects go here
+│   └── tests/          Specs go here
+├── flows/
+│   ├── inventory.yaml  Business flows: the only place flow IDs are defined
+│   └── quarantine.yaml Quarantined tests (owner, Jira key, deadline)
+└── scripts/            Flow-tag linter and its tests
 ```
 
 ## Environments
@@ -41,6 +47,7 @@ Markers:
 - `smoke`: read-only release-gate checks.
 - `regression`: the full business-rule suite, for UAT.
 - `db`: the test includes SQL checks.
+- `flow("<id>")`: the business flow the test covers (required, see below).
 
 Allure results are written to `reports/allure-results`.
 
@@ -57,6 +64,23 @@ npm run report                    # open the HTML report
 
 Traces, screenshots and videos are kept for failed tests. Reports are written to `reports/html` (Playwright) and `reports/allure-results` (Allure).
 
+## Flows and the flow-tag check
+
+Every test names exactly one flow from `flows/inventory.yaml`: pytest tests with `@pytest.mark.flow("job-creation")`, Playwright specs with the tag `@flow:job-creation`, for example `test('creates a job', { tag: '@flow:job-creation' }, ...)`. To add a flow, add it to the inventory first (kebab-case ID); the QA lead owns that file.
+
+The linter fails when a test has no flow tag, more than one, or a flow ID that isn't in the inventory. It prints the number of tests per flow and lists skipped and `fixme` tests, which count as not covered. It needs the API-test virtualenv and `npm install` in `ui-tests`, and it never runs a test.
+
+```bash
+api-tests/.venv/bin/python scripts/flow_lint.py      # from the repo root
+cd scripts && ../api-tests/.venv/bin/python -m pytest  # the linter's own tests
+```
+
+Tests are named by a canonical test ID, used in the inventory and quarantine files: `api:tests/test_login.py::test_name` or `ui:tests/login.spec.ts > Describe > title`.
+
+## PR checks (`ci`)
+
+Every pull request to `main` runs the `ci` check: Python lint (`ruff check .`), the flow-tag check and its tests, pytest collection (no tests run) and the TypeScript type check. It uses no secrets. How merges are gated depends on the GitHub plan; see [docs/runbook.md](docs/runbook.md).
+
 ## BMAD Method
 
 [BMAD Method](https://bmadcode.com/) v6.12.0 (the `bmm` module) is used locally with Claude Code and is not committed: `_bmad/`, `_bmad-output/` and `.claude/skills/bmad-*` are gitignored. To install it in your clone, run `npx bmad-method@6.12.0 install --directory . --modules bmm --tools claude-code`.
@@ -72,6 +96,6 @@ If you're not sure where to start, ask Claude Code to run the `bmad-help` skill.
 ## Not set up yet
 
 - PoolBrain tests
-- CI workflows (GitHub Actions and the Docker runner)
+- CI workflows that run tests (`uat-pr`, nightly, smoke) and branch protection on `main`
 - Seeded test data
-- The business-flow inventory
+- The QA lead's name, flow owners and confirmed business rules in `flows/inventory.yaml` (currently `TBD` and drafts)
