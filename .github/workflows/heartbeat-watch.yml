@@ -1,0 +1,56 @@
+# Alerts when n8n stops (Story 5.4, SEC-09). n8n can't alert about itself, so
+# n8n's W5 workflow writes the repository variable N8N_HEARTBEAT_AT every hour
+# and this workflow checks it from GitHub's side.
+#
+# Stale (over 2 hours old), missing or unreadable: the run fails, which
+# makes GitHub email the repository owner, and the job summary shows the S15
+# alert. At most one alert every 6 hours per outage.
+#
+# Slack: when the `notify` Environment with SLACK_WEBHOOK_URL exists (Story 2.4
+# or a plan with Environments), add `environment: notify` to the job and pass
+# SLACK_WEBHOOK_URL to the check step. Until then there is no secret here.
+name: heartbeat-watch
+
+on:
+  schedule:
+    - cron: "23 * * * *"  # every hour, UTC
+  workflow_dispatch:
+
+permissions:
+  actions: read
+
+concurrency:
+  group: heartbeat-watch
+
+jobs:
+  heartbeat-watch:
+    name: heartbeat-watch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Was an alert already raised in the last 6 hours?
+        id: recent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          since="$(date -u -d '6 hours ago' +%Y-%m-%dT%H:%M:%SZ)"
+          count="$(gh api "repos/${{ github.repository }}/actions/workflows/heartbeat-watch.yml/runs?status=failure&created=%3E%3D$since" --jq .total_count)"
+          echo "alerted=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Check n8n's heartbeat
+        env:
+          N8N_HEARTBEAT_AT: ${{ vars.N8N_HEARTBEAT_AT }}
+          ALERTED: ${{ steps.recent.outputs.alerted }}
+        run: |
+          args=(--value "$N8N_HEARTBEAT_AT")
+          if [ "$ALERTED" = true ]; then args+=(--alerted-recently); fi
+          python scripts/heartbeat_check.py "${args[@]}"

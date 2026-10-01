@@ -1,0 +1,133 @@
+{
+  "id": "w5Heartbeat00001",
+  "name": "W5 Heartbeat",
+  "active": false,
+  "nodes": [
+    {
+      "id": "d1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Every hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d1b2c3d4-0001-4000-8000-000000000009",
+      "name": "Run now",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "d1b2c3d4-0001-4000-8000-000000000002",
+      "name": "Update N8N_HEARTBEAT_AT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "https://api.github.com/repos/arpanpandeygate6/poolbrain-qa/actions/variables/N8N_HEARTBEAT_AT",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: 'N8N_HEARTBEAT_AT', value: $now.toUTC().toISO({ suppressMilliseconds: true }) }) }}"
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "d1b2c3d4-0001-4000-8000-000000000003",
+      "name": "Create N8N_HEARTBEAT_AT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        120
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/arpanpandeygate6/poolbrain-qa/actions/variables",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: 'N8N_HEARTBEAT_AT', value: $now.toUTC().toISO({ suppressMilliseconds: true }) }) }}"
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every hour": {
+      "main": [
+        [
+          {
+            "node": "Update N8N_HEARTBEAT_AT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now": {
+      "main": [
+        [
+          {
+            "node": "Update N8N_HEARTBEAT_AT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update N8N_HEARTBEAT_AT": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Create N8N_HEARTBEAT_AT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  }
+}
