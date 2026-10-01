@@ -7,11 +7,13 @@
     "test": "playwright test",
     "test:headed": "playwright test --headed",
     "report": "playwright show-report reports/html",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "report:combined": "allure generate --config ../.github/actions/test-report/allurerc.mjs -o ../reports/allure-report ../api-tests/reports/allure-results reports/allure-results"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.3",
+    "allure": "3.19.1",
     "allure-playwright": "^3.13.0",
     "dotenv": "^18.0.4",
     "typescript": "^7.0.2"

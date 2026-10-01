@@ -31,7 +31,9 @@ flows:
     rules:
       - id: LOGIN-1
         description: A role test account signs in with valid credentials.
-        tests: []
+        tests:
+          - api:tests/test_login.py::test_api_user_can_log_in
+          - ui:tests/login.spec.ts > Login > office admin signs in
 
   - id: job-creation
     name: Job creation

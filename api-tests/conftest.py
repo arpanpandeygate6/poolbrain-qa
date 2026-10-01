@@ -1,3 +1,4 @@
+import allure
 import pytest
 
 from config import Settings, load_settings
@@ -15,7 +16,10 @@ def settings(pytestconfig) -> Settings:
 
 
 def pytest_collection_modifyitems(config, items):
-    """On read-only environments, skip everything that is not a smoke test."""
+    """Group the API tests in the Allure report; on read-only environments, skip everything that is not smoke."""
+    for item in items:
+        item.add_marker(allure.parent_suite("poolbrain-api-tests"))
+
     env_settings = load_settings(config.getoption("--env"))
     if not env_settings.read_only:
         return

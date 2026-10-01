@@ -1,0 +1,4 @@
+# QA team: GitHub usernames allowed to start the "Run UAT tests" (uat-pr)
+# workflow, one per line. This file changes only through a reviewed PR that
+# another QA member approves. uat-pr always reads it from main.
+arpanpandeygate6
