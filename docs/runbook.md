@@ -394,6 +394,27 @@ Triage only suggests: it never changes a test result, the gate or a file. People
 
 **Checked on 4 Oct 2026 (unit tests):** the ID check; the token-only setup check; the download of only `triage-input` (and its contract and run-ID checks); the flaky rule in six history cases; the "every test exactly once" and bug-title rules; and the repository-unchanged check.
 
+### `quarantine` workflow (Story 6.5)
+
+Turns a quarantine request into a PR that adds one entry to `flows/quarantine.yaml`. n8n W3b starts it after a QA member reacts 🔁 (Story 6.6). By hand: **Actions → quarantine → Run workflow** with the owner's Jira key and the request JSON, following `contracts/quarantine-request.schema.json` (sample in `contracts/samples/`). Its run title is `quarantine <Jira key>`. In order, it:
+1. checks the request against its contract and that it names the same Jira key (otherwise `error`, `invalid-request`; an unknown `schema_version` is rejected);
+2. runs the shared first step: kill switch, and the `quarantine` daily limit (5 in `AGENT_CAPS`);
+3. checks the `qa-agent` app is set up;
+4. stops with `ok` if the test is already in `flows/quarantine.yaml` (`already-quarantined`), or if `agent/<KEY>-quarantine` already has an open PR (`already-open`, with its link);
+5. adds the entry (test, owner, Jira key, deadline) to `flows/quarantine.yaml`, keeping its comments. **No model is called:** the change is four lines, so `scripts/agent_quarantine.py` writes it, and nothing else can change;
+6. as `qa-agent`, pushes `agent/<KEY>-quarantine` and opens "[<KEY>] Quarantine: <test_id>" with the Quarantine template (`.github/PULL_REQUEST_TEMPLATE/quarantine.md`): the rerun evidence and who marked it, what changed, what happens after merge, the reviewer's steps and the links;
+7. always saves `run-outcome` (`ok` with the PR link).
+
+**Until QA merges the PR, the test keeps gating.** After the merge, the next nightly reports it as QUARANTINED: it still runs but doesn't gate, and its flow counts as not covered. It can't push to `main` (the GitHub Free gap under `draft-cases` applies the same way).
+
+**Checked on 5 Oct 2026 (unit tests):**
+- the request checks (bad JSON, unknown version, missing owner, bad date, mismatched key);
+- already quarantined, already open, and the app-only setup check;
+- adding to the real file format (comments kept, the empty `[]` replaced) and appending, with awkward values;
+- the PR body;
+- the nightly's own reader seeing the test as quarantined after the change;
+- that the workflow commits only `flows/quarantine.yaml` and calls no model.
+
 ## Kill switch and daily limits (Story 5.6)
 
 **Turning AI work off and on.** In GitHub: **Settings → Secrets and variables → Actions → Variables**, the repository variable `AGENT_ENABLED`. Only the exact value `true` lets AI work run. `false`, any other value, or no variable at all counts as off. Only people change it (the QA lead or n8n maintainer), never a workflow.

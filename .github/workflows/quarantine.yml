@@ -1,0 +1,131 @@
+# quarantine (Story 6.5): turns a quarantine request into a PR that adds one
+# entry to flows/quarantine.yaml, opened as the qa-agent app. Started by n8n W3b
+# after a QA member reacts 🔁 (Story 6.6), or by hand: Actions → quarantine →
+# Run workflow, with the owner's Jira key and the request JSON
+# (contracts/quarantine-request.schema.json).
+#
+# The change is four lines, so a script writes it (scripts/agent_quarantine.py);
+# no model is called and nothing else can change. It still runs the shared first
+# step: kill switch and the `quarantine` daily limit.
+#
+# Order: check the request → kill switch and daily cap → is the app set up? →
+# already quarantined, or PR already open? → add the entry → open the PR →
+# run-outcome (always). The test keeps gating until QA merges the PR.
+#
+# GitHub Free: no `agent` Environment yet (see draft-cases.yml and docs/runbook.md).
+
+name: quarantine
+# W3b finds the run by this title.
+run-name: quarantine ${{ inputs.jira_key }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      jira_key:
+        description: "The owner's Jira ticket for the fix, for example PM-5679"
+        required: true
+        type: string
+      quarantine_request:
+        description: "The quarantine request as JSON (contracts/quarantine-request.schema.json)"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: quarantine-${{ inputs.jira_key }}
+  cancel-in-progress: false
+
+jobs:
+  quarantine:
+    name: quarantine
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read         # count today's runs (shared first step)
+      contents: read
+      pull-requests: read   # is the PR already open?
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Install the checkers
+        run: pip install -q "$(grep -i '^jsonschema==' api-tests/requirements.txt)" "$(grep -i '^PyYAML==' api-tests/requirements.txt)"
+
+      - name: Check the request
+        id: request
+        env:
+          REQUEST: ${{ inputs.quarantine_request }}
+          JIRA_KEY: ${{ inputs.jira_key }}
+        run: |
+          printf '%s' "$REQUEST" > "$RUNNER_TEMP/quarantine-request.json"
+          python scripts/agent_quarantine.py precheck --request-file "$RUNNER_TEMP/quarantine-request.json" --jira-key "$JIRA_KEY"
+
+      - name: Kill switch and daily limit
+        id: gate
+        if: steps.request.outputs.go == 'true'
+        uses: ./.github/actions/agent-start
+        with:
+          ticket: ${{ inputs.jira_key }}
+          agent-enabled: ${{ vars.AGENT_ENABLED }}
+          agent-caps: ${{ vars.AGENT_CAPS }}
+
+      - name: Is the app set up?
+        id: setup
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          HAS_APP_ID: ${{ vars.QA_AGENT_APP_ID != '' }}
+          HAS_APP_KEY: ${{ secrets.QA_AGENT_PRIVATE_KEY != '' }}
+        run: python scripts/agent_quarantine.py setup-check --request-file "$RUNNER_TEMP/quarantine-request.json"
+
+      - name: Already quarantined, or PR already open?
+        id: repo
+        if: steps.setup.outputs.go == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/agent_quarantine.py repo --request-file "$RUNNER_TEMP/quarantine-request.json"
+
+      - name: Act as qa-agent
+        id: app
+        if: steps.repo.outputs.go == 'true'
+        # actions/create-github-app-token v3.2.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ vars.QA_AGENT_APP_ID }}
+          private-key: ${{ secrets.QA_AGENT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Add the entry and open the quarantine PR
+        if: steps.repo.outputs.go == 'true'
+        env:
+          JIRA_KEY: ${{ inputs.jira_key }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          request="$RUNNER_TEMP/quarantine-request.json"
+          python scripts/agent_quarantine.py add --request-file "$request"
+          title="$(python scripts/agent_quarantine.py pr-body --request-file "$request" --out "$RUNNER_TEMP/pr-body.md")"
+          branch="agent/$JIRA_KEY-quarantine"
+          git config user.name "qa-agent[bot]"
+          git config user.email "qa-agent[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add flows/quarantine.yaml
+          git commit -q -m "$title"
+          # Only ever the agent's own branch, never main.
+          git push -q --force "https://x-access-token:$GH_TOKEN@github.com/$REPOSITORY.git" "HEAD:refs/heads/$branch"
+          url="$(gh pr create --repo "$REPOSITORY" --base main --head "$branch" --title "$title" --body-file "$RUNNER_TEMP/pr-body.md")"
+          python scripts/agent_quarantine.py opened --request-file "$request" --pr-url "$url"
+
+      - name: Save run-outcome
+        if: always()
+        uses: ./.github/actions/agent-finish
+        with:
+          ticket: ${{ inputs.jira_key }}
+          status: ${{ job.status == 'success' && 'ok' || 'error' }}
