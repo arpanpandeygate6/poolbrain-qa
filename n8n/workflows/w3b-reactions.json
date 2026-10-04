@@ -993,7 +993,7 @@
         50
       ],
       "parameters": {
-        "jsCode": "// 🐞 Bug and ✅ Approve write to Jira: through the gate (a Jira write, AR-11).\n// A reaction the gate held back is asked about again after its wait.\nconst now = Date.now();\nreturn $input.all()\n  .filter((d) => ['bug', 'approve'].includes(d.json.action))\n  .filter((d) => !d.json.jira_wait_until || Date.parse(d.json.jira_wait_until) <= now)\n  .map((d) => ({ json: { ...d.json, action_kind: d.json.action,\n    gate: { action: 'jira-write', workflow: '', target: `reaction-${d.json.map_id}`, payload: { map_id: d.json.map_id, reaction: d.json.action } } } }));\n"
+        "jsCode": "// 🐞 Bug, 🔁 Flaky and ✅ Approve write to Jira: through the gate (a Jira write, AR-11).\n// A reaction the gate held back is asked about again after its wait.\nconst now = Date.now();\nreturn $input.all()\n  .filter((d) => ['bug', 'flaky', 'approve'].includes(d.json.action))\n  .filter((d) => !d.json.jira_wait_until || Date.parse(d.json.jira_wait_until) <= now)\n  .map((d) => ({ json: { ...d.json, action_kind: d.json.action,\n    gate: { action: 'jira-write', workflow: '', target: `reaction-${d.json.map_id}`, payload: { map_id: d.json.map_id, reaction: d.json.action } } } }));\n"
       }
     },
     {
@@ -1241,6 +1241,151 @@
       }
     },
     {
+      "id": "e3b2c3d4-0001-4000-8000-000000000046",
+      "name": "Flakies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        25
+      ],
+      "parameters": {
+        "jsCode": "const repo = $('Settings').first().json.repo;\nreturn $input.all().filter((d) => d.json.action === 'flaky').map((d) => ({ json: { ...d.json, repo } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000048",
+      "name": "Flaky",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3600,
+        25
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "rxFlaky000000001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "test_id": "={{ $json.test_id }}",
+            "flow_id": "={{ $json.flow_id }}",
+            "nightly_run_id": "={{ $json.nightly_run_id }}",
+            "channel": "={{ $json.channel }}",
+            "ts": "={{ $json.ts }}",
+            "actor_email": "={{ $json.actor_email }}",
+            "actor_name": "={{ $json.actor_name }}",
+            "repo": "={{ $json.repo }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "test_id",
+              "displayName": "test_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "flow_id",
+              "displayName": "flow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "nightly_run_id",
+              "displayName": "nightly_run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ts",
+              "displayName": "ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_email",
+              "displayName": "actor_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_name",
+              "displayName": "actor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "repo",
+              "displayName": "repo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000049",
+      "name": "To queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3800,
+        150
+      ],
+      "parameters": {
+        "jsCode": "// A 🔁 that created its owner ticket: queue the quarantine request. The queue\n// step below sends it through the gate (the quarantine cap) and starts the\n// workflow, so a failed start or a reached cap just waits and is retried.\nconst done = $('Jira results').all();\nreturn $('Record Jira decision').all().flatMap((row, i) => (row.json.id && done[i].json.action === 'flaky' && !done[i].json.stop\n  ? [{ json: done[i].json }] : []));\n"
+      }
+    },
+    {
       "id": "e3b2c3d4-0001-4000-8000-000000000038",
       "name": "Approvals",
       "type": "n8n-nodes-base.code",
@@ -1371,7 +1516,7 @@
         250
       ],
       "parameters": {
-        "jsCode": "// Each Jira action with its result, in order: bugs, then approvals.\nconst pair = (from, results) => ($(from).isExecuted ? $(from).all().map((d, i) => ({ ...d.json, ...$(results).all()[i].json })) : []);\nreturn [...pair('Bugs', 'File bug'), ...pair('Approvals', 'Send questions')].map((d) => ({ json: d }));\n"
+        "jsCode": "// Each Jira action with its result, in order: bugs, flaky, then approvals. A\n// 🔁 that stopped (owner missing, already quarantined) created nothing.\nconst pair = (from, results) => ($(from).isExecuted ? $(from).all().map((d, i) => ({ ...d.json, ...$(results).all()[i].json })) : []);\nreturn [...pair('Bugs', 'File bug'), ...pair('Flakies', 'Flaky'), ...pair('Approvals', 'Send questions')].map((d) => ({ json: d }));\n"
       }
     },
     {
@@ -1398,6 +1543,29 @@
       }
     },
     {
+      "id": "e3b2c3d4-0001-4000-8000-000000000047",
+      "name": "Queue quarantine",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4000,
+        150
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit.deferred_requests (action, workflow, target, payload, reason, not_before)\nVALUES ('dispatch', 'quarantine', $1, $2::jsonb, 'retry', now())\nON CONFLICT (action, workflow, target) WHERE done_at IS NULL DO NOTHING\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.jira_key, JSON.stringify({ jira_key: $json.jira_key, quarantine_request: $json.request })] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
       "id": "e3b2c3d4-0001-4000-8000-000000000042",
       "name": "Jira replies",
       "type": "n8n-nodes-base.code",
@@ -1407,7 +1575,7 @@
         250
       ],
       "parameters": {
-        "jsCode": "// S4 after a Jira action (EXPERIENCE.md M4), only for decisions just recorded.\nconst BOT = 'Filed via QA bot';  // contracts/vocabulary.json bot_label.jira\nconst done = $('Jira results').all();\nreturn $input.all().flatMap((row, i) => {\n  if (!row.json.id) return [];\n  const d = done[i].json;\n  const who = `<@${d.actor_id}>`;\n  const base = { decision_id: row.json.id, action: d.action, kind: '', todo: '', todo_label: '', thread_ts: d.thread_ts || d.ts,\n    links: [{ label: `Jira ${d.jira_key}`, url: d.url }], legend: '↩️ within 24 h to undo' };\n  if (d.action === 'bug') {\n    return [{ json: { ...base, header: `Bug ${d.jira_key} filed by ${d.actor_name}`, body: d.reporter_ok\n      ? `Bug ${d.jira_key} filed by ${who}. Labelled \"${BOT}\".`\n      : `Bug ${d.jira_key} filed by ${who}. Jira didn't accept you as Reporter, so a \"Filed by ${d.actor_name}\" comment was added.` } }];\n  }\n  return [{ json: { ...base, header: `Questions added to ${d.jira_key}`, body: `Questions added to ${d.jira_key} as a comment naming ${who}.` } }];\n});\n"
+        "jsCode": "// S4 after a Jira action (EXPERIENCE.md M4), only for decisions just recorded.\nconst BOT = 'Filed via QA bot';  // contracts/vocabulary.json bot_label.jira\nconst done = $('Jira results').all();\nreturn $input.all().flatMap((row, i) => {\n  if (!row.json.id) return [];\n  const d = done[i].json;\n  const who = `<@${d.actor_id}>`;\n  const base = { decision_id: row.json.id, action: d.action, kind: '', todo: '', todo_label: '', thread_ts: d.thread_ts || d.ts,\n    links: [{ label: `Jira ${d.jira_key}`, url: d.url }], legend: '↩️ within 24 h to undo' };\n  if (d.action === 'flaky' && d.stop) {\n    const why = d.stop === 'owner-missing'\n      ? `Nothing was created: the flow \\`${d.flow_id || 'unknown'}\\` has no owner in the flow inventory. QA lead to add it to the inventory, then undo ↩️ and react 🔁 again.`\n      : 'Nothing was created: this test is already in the quarantine list.';\n    return [{ json: { ...base, header: `Flaky not recorded`, body: `${who}: ${why}`, links: [], legend: '' } }];\n  }\n  if (d.action === 'flaky') {\n    return [{ json: { ...base, header: `Quarantine requested by ${d.actor_name}`,\n      body: `Quarantine requested by ${who}. Owner ticket ${d.jira_key} created.\\nThe test keeps gating until QA merges the quarantine PR.` } }];\n  }\n  if (d.action === 'bug') {\n    return [{ json: { ...base, header: `Bug ${d.jira_key} filed by ${d.actor_name}`, body: d.reporter_ok\n      ? `Bug ${d.jira_key} filed by ${who}. Labelled \"${BOT}\".`\n      : `Bug ${d.jira_key} filed by ${who}. Jira didn't accept you as Reporter, so a \"Filed by ${d.actor_name}\" comment was added.` } }];\n  }\n  return [{ json: { ...base, header: `Questions added to ${d.jira_key}`, body: `Questions added to ${d.jira_key} as a comment naming ${who}.` } }];\n});\n"
       }
     },
     {
@@ -1539,7 +1707,7 @@
         250
       ],
       "parameters": {
-        "jsCode": "const failed = $input.all().filter((p) => !p.json.posted && !p.json.preview);\nif (failed.length) throw new Error(`Jira confirmation not posted: ${failed[0].json.error}`);\nreturn $('Jira results').all().map((d) => ({ json: {\n  actor: d.json.actor_email, actor_type: 'human', action: d.json.action === 'bug' ? 'decision-bug' : 'decision-approve',\n  target: d.json.action === 'bug' ? `${d.json.jira_key} for ${d.json.test_id}` : `${d.json.jira_key} questions`, link: d.json.url } }));\n"
+        "jsCode": "const failed = $input.all().filter((p) => !p.json.posted && !p.json.preview);\nif (failed.length) throw new Error(`Jira confirmation not posted: ${failed[0].json.error}`);\nreturn $('Jira results').all().map((d) => ({ json: {\n  actor: d.json.actor_email, actor_type: 'human', action: `decision-${d.json.action}${d.json.stop ? `-${d.json.stop}` : ''}`,\n  target: d.json.action === 'approve' ? `${d.json.jira_key} questions` : `${d.json.jira_key || 'no ticket'} for ${d.json.test_id}`,\n  link: d.json.url || '' } }));\n"
       }
     },
     {
@@ -1550,6 +1718,280 @@
       "position": [
         4400,
         250
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000050",
+      "name": "Due quarantines",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1600,
+        450
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Quarantine requests that may be started now, oldest first (Story 5.6 rules).\nSELECT id AS queue_id, target AS jira_key, payload FROM audit.deferred_requests\nWHERE action = 'dispatch' AND workflow = 'quarantine' AND done_at IS NULL AND not_before <= now()\nORDER BY created_at, id;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000051",
+      "name": "Quarantines to the gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        450
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().filter((q) => q.json.jira_key).map((q) => ({ json: { action: 'dispatch', workflow: 'quarantine',\n  target: q.json.jira_key, payload: typeof q.json.payload === 'string' ? JSON.parse(q.json.payload) : q.json.payload } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000052",
+      "name": "Quarantine gate",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2000,
+        450
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "gateCheck0000001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "={{ $json.action }}",
+            "workflow": "={{ $json.workflow }}",
+            "target": "={{ $json.target }}",
+            "payload": "={{ $json.payload }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "payload",
+              "displayName": "payload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000053",
+      "name": "Allowed quarantines",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        450
+      ],
+      "parameters": {
+        "jsCode": "const due = $('Due quarantines').all().filter((q) => q.json.jira_key);\nreturn $input.all().flatMap((answer, i) => (answer.json.allowed === true ? [{ json: { ...due[i].json,\n  payload: typeof due[i].json.payload === 'string' ? JSON.parse(due[i].json.payload) : due[i].json.payload } }] : []));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000054",
+      "name": "Start quarantine",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        450
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/workflows/quarantine.yml/dispatches",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ref: 'main', inputs: { jira_key: $json.jira_key, quarantine_request: JSON.stringify($json.payload.quarantine_request) } }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000055",
+      "name": "Mark started",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2600,
+        450
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE audit.deferred_requests SET done_at = now() WHERE id = $1::bigint AND done_at IS NULL RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('Allowed quarantines').item.json.queue_id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000056",
+      "name": "Quarantine audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        450
+      ],
+      "parameters": {
+        "jsCode": "return $('Allowed quarantines').all().map((q) => ({ json: { actor: 'n8n:w3b-reactions', actor_type: 'n8n',\n  action: 'dispatch-quarantine', target: `${q.json.jira_key} ${q.json.payload.quarantine_request.test_id}`.slice(0, 300),\n  link: `https://github.com/${$('Settings').first().json.repo}/actions/workflows/quarantine.yml` } }));\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000057",
+      "name": "Write quarantine audit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3000,
+        450
       ],
       "parameters": {
         "workflowId": {
@@ -1755,7 +2197,89 @@
             "index": 0
           },
           {
+            "node": "Due quarantines",
+            "type": "main",
+            "index": 0
+          },
+          {
             "node": "Release the lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Due quarantines": {
+      "main": [
+        [
+          {
+            "node": "Quarantines to the gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quarantines to the gate": {
+      "main": [
+        [
+          {
+            "node": "Quarantine gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quarantine gate": {
+      "main": [
+        [
+          {
+            "node": "Allowed quarantines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed quarantines": {
+      "main": [
+        [
+          {
+            "node": "Start quarantine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start quarantine": {
+      "main": [
+        [
+          {
+            "node": "Mark started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark started": {
+      "main": [
+        [
+          {
+            "node": "Quarantine audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quarantine audit": {
+      "main": [
+        [
+          {
+            "node": "Write quarantine audit",
             "type": "main",
             "index": 0
           }
@@ -1952,6 +2476,11 @@
             "index": 0
           },
           {
+            "node": "Flakies",
+            "type": "main",
+            "index": 0
+          },
+          {
             "node": "Approvals",
             "type": "main",
             "index": 0
@@ -1969,6 +2498,17 @@
         [
           {
             "node": "File bug",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flakies": {
+      "main": [
+        [
+          {
+            "node": "Flaky",
             "type": "main",
             "index": 0
           }
@@ -2001,7 +2541,23 @@
       "main": [
         [
           {
+            "node": "To queue",
+            "type": "main",
+            "index": 0
+          },
+          {
             "node": "Jira replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To queue": {
+      "main": [
+        [
+          {
+            "node": "Queue quarantine",
             "type": "main",
             "index": 0
           }

@@ -603,7 +603,7 @@ Everything else is ignored with no reply: other emoji, people outside the group,
 **Decisions** (`audit.reaction_decisions`, at most one live decision per message; never deleted):
 - **🌩️ Environment:** recorded, with a thread reply: "<@member> marked this failure 🌩️ Environment. The gate is unchanged. This will show in the daily update." and "↩️ within 24 h to undo". Nothing goes to Jira. Audit entry with the member's email as actor.
 - **🙈 Ignore:** W3b asks once in the thread: "<@member>, to record 🙈 Ignore, reply in this thread with a short reason. Nothing is recorded until then." When that member's reply arrives, the reason is recorded and confirmed ('… Reason: "…". The gate is unchanged.'), with an audit entry.
-- **🐞 Bug and ✅ Approve** write to Jira (part 2, below). **🔁 Flaky** comes next, and until then it stays unhandled (no reply).
+- **🐞 Bug, 🔁 Flaky and ✅ Approve** write to Jira (parts 2 and 3, below).
 
 W3b needs the Slack app's `reactions:read`, `channels:history` (`groups:history` for a private channel), `usergroups:read`, `users:read` and `users:read.email` scopes, which are all in the manifest. A member whose email can't be read is recorded as `<member ID>@slack.invalid`. W3b is installed but **switched off** with W1.
 
@@ -642,6 +642,25 @@ with "↩️ within 24 h to undo", and an audit entry with the member's email.
 - Unit tests: the bug fields (no raw evidence, Reporter set, the links), Reporter from the list, the three creation outcomes (created; Reporter refused; other error), the read-back check, the S20 comment, the questions comment, the gate wait, and the replies.
 - Read-only Jira checks: PM has the issue types Story, Task, **Bug**, Epic and Subtask, and the email search answers but finds nobody.
 - **Nothing was written to Jira:** these paths are first used for real after Slack and the Story 4.4 setup, on a staged failure (B9 exit check).
+
+### W3b part 3: 🔁 Flaky (Story 6.6)
+
+Also a Jira write, so it goes through the gate first. "Reaction: flaky" (`n8n/workflows/reaction-flaky.json`):
+1. reads `flows/inventory.yaml` and `flows/quarantine.yaml` from `main`. If the test is **already quarantined**, or its flow has **no owner** (missing or "TBD"), it creates nothing. W3b records that and replies: "Nothing was created: this test is already in the quarantine list." or "…the flow `<flow>` has no owner in the flow inventory. QA lead to add it to the inventory, then undo ↩️ and react 🔁 again.";
+2. builds the rerun evidence from that night's `failure-list` ("Failed 2 of the last 4 nights, passed on retry.");
+3. creates the owner's **Task** in PM first (S18): "Flaky test: <test>", label `filed-via-qa-bot`, **due date two weeks from today**, the owner, "Marked flaky by <name>" with the evidence, "A quarantine PR will be opened; the test keeps gating until QA merges it.", and links. Reporter works as for 🐞 (`account_map`, or the "Filed by" comment);
+4. returns a `quarantine-request` that follows its contract.
+
+W3b then records the decision, puts the **quarantine request on the waiting list** (`audit.deferred_requests`, workflow `quarantine`), and replies "Quarantine requested by @member. Owner ticket PM-… created. The test keeps gating until QA merges the quarantine PR." The waiting list is queued **before** the reply, so a failed reply can't lose the request.
+
+**Starting the quarantine workflow:** in every run, after the reactions, W3b takes due quarantine requests oldest first, asks the gate (kill switch and the `quarantine` limit of 5 a day), starts `quarantine` with the Jira key and the request, and marks them started (audit `dispatch-quarantine`). A request the gate holds back, or one whose start fails, stays on the list and is retried. The Jira ticket stays either way. When the limit is reached, the gate posts its "waits until tomorrow" notice.
+
+**Note: every flow owner in `flows/inventory.yaml` is still "TBD",** so 🔁 replies "owner missing" until the QA lead fills them in.
+
+**Checked on 5 Oct 2026:**
+- Unit tests: the owner (TBD, named, other flow, unknown flow, already quarantined), the owner ticket (summary, Task, due date, evidence, description), the request passing the real `quarantine-request` contract, the three replies, which decisions are queued, the gate on due requests, and that queueing comes before the reply.
+- Database: the queue queries (queued once, due, started) were run on the real database, and the test row was deleted.
+- **Nothing was written to Jira.**
 
 ## Ready-for-QA notice (Story 5.7)
 

@@ -61,9 +61,10 @@ install_with_channel workflows/slack-post-message.json slackPostMsg0001
 install workflows/w0-error-handler.json w0ErrorHandler1
 # Reads one JSON artifact of a GitHub run; used by W2/W3 (Story 6.3).
 install workflows/github-read-artifact.json ghReadArtifact01
-# The Jira actions W3b calls for 🐞 and ✅ (Stories 6.4, 6.7).
+# The Jira actions W3b calls for 🐞, ✅ and 🔁 (Stories 6.4, 6.7, 6.6).
 install workflows/reaction-file-bug.json rxFileBug0000001
 install workflows/reaction-send-questions.json rxSendQuestions1
+install workflows/reaction-flaky.json rxFlaky000000001
 # The kill-switch and daily-cap check every AI action calls first (Story 5.6).
 install workflows/gate-check.json gateCheck0000001
 

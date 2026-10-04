@@ -1,0 +1,934 @@
+{
+  "id": "rxFlaky000000001",
+  "name": "Reaction: flaky",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Reaction",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "test_id",
+              "type": "string"
+            },
+            {
+              "name": "flow_id",
+              "type": "string"
+            },
+            {
+              "name": "nightly_run_id",
+              "type": "string"
+            },
+            {
+              "name": "channel",
+              "type": "string"
+            },
+            {
+              "name": "ts",
+              "type": "string"
+            },
+            {
+              "name": "actor_email",
+              "type": "string"
+            },
+            {
+              "name": "actor_name",
+              "type": "string"
+            },
+            {
+              "name": "repo",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000002",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1b2c3d4-0001-4000-8000-000000000200",
+              "name": "jira_url",
+              "value": "https://gatesix.atlassian.net",
+              "type": "string"
+            },
+            {
+              "id": "b1b2c3d4-0001-4000-8000-000000000201",
+              "name": "project",
+              "value": "PM",
+              "type": "string"
+            },
+            {
+              "id": "b1b2c3d4-0001-4000-8000-000000000202",
+              "name": "issue_type",
+              "value": "Task",
+              "type": "string"
+            },
+            {
+              "id": "b1b2c3d4-0001-4000-8000-000000000203",
+              "name": "label",
+              "value": "filed-via-qa-bot",
+              "type": "string"
+            },
+            {
+              "id": "b1b2c3d4-0001-4000-8000-000000000204",
+              "name": "account_map",
+              "value": "{}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000003",
+      "name": "Inventory",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Reaction').first().json.repo }}/contents/flows/inventory.yaml",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ref",
+              "value": "main"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000004",
+      "name": "Quarantine list",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Reaction').first().json.repo }}/contents/flows/quarantine.yaml",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ref",
+              "value": "main"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000005",
+      "name": "Check owner",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The test's owner from flows/inventory.yaml on main, and whether it is already\n// quarantined. Read as text (the files' fixed format), without a YAML library.\nconst r = $('Reaction').first().json;\nconst decode = (res) => (res.statusCode === 200 && res.body?.content ? atob(res.body.content.replace(/\\s/g, '')) : '');\nconst inventory = decode($('Inventory').first().json);\nconst quarantine = decode($('Quarantine list').first().json);\nif (!inventory) throw new Error('flows/inventory.yaml could not be read from main');\nconst unquote = (v) => { v = v.trim(); try { return v.startsWith('\"') ? JSON.parse(v) : v.replace(/^'(.*)'$/, '$1'); } catch { return v; } };\nconst listed = [...quarantine.matchAll(/^\\s*-?\\s*test_id:\\s*(.+)$/gm)].map((m) => unquote(m[1]));\nif (listed.includes(r.test_id)) return [{ json: { stop: 'already-quarantined' } }];\nconst block = inventory.split(/^\\s*- id:\\s*/m).slice(1).find((b) => unquote(b.split('\\n')[0]) === r.flow_id) ?? '';\nconst owner = unquote((block.match(/^\\s+owner:\\s*(.+)$/m) ?? [])[1] ?? '');\nif (!owner || /^(tbd|todo|none|-)$/i.test(owner)) return [{ json: { stop: 'owner-missing' } }];\nreturn [{ json: { stop: '', owner } }];\n"
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000006",
+      "name": "Go on?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b1b2c3d4-0001-4000-8000-000000000601",
+              "leftValue": "={{ $json.stop }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000007",
+      "name": "Read what",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "const r = $('Reaction').first().json;\nreturn [{ json: { repo: r.repo, run_id: r.nightly_run_id, name: 'failure-list' } }];\n"
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000008",
+      "name": "Failure list",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1400,
+        -100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "ghReadArtifact01",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "repo": "={{ $json.repo }}",
+            "run_id": "={{ $json.run_id }}",
+            "name": "={{ $json.name }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "repo",
+              "displayName": "repo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000009",
+      "name": "Jira user",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        -100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/user/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $('Reaction').first().json.actor_email }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000010",
+      "name": "Slack link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        -100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/chat.getPermalink",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "options": {},
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $('Reaction').first().json.channel }}"
+            },
+            {
+              "name": "message_ts",
+              "value": "={{ $('Reaction').first().json.ts }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000011",
+      "name": "Build task",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// The S18 owner ticket (EXPERIENCE.md M17), and the quarantine request it backs.\n\n// Atlassian Document Format helpers: a paragraph of text and links.\nconst text = (t) => ({ type: 'text', text: t });\nconst linkTo = (label, url) => ({ type: 'text', text: label, marks: [{ type: 'link', attrs: { href: url } }] });\nconst para = (...parts) => ({ type: 'paragraph', content: parts.map((x) => (typeof x === 'string' ? text(x) : x)) });\nconst links = (items) => para(...items.filter((l) => l.url).flatMap((l, i) => (i ? [' · ', linkTo(l.label, l.url)] : [linkTo(l.label, l.url)])));\n\nconst r = $('Reaction').first().json;\nconst s = $('Settings').first().json;\nconst owner = $('Check owner').first().json.owner;\n// Rerun evidence from the night's failure-list (history and retry pass).\nconst list = $('Failure list').first().json;\nconst failure = list.found ? (list.data.failures ?? []).find((f) => f.test_id === r.test_id) : null;\nconst nights = failure?.history ?? [];\nconst failed = nights.filter((n) => ['failed', 'passed-on-retry'].includes(n.result)).length;\nconst parts = [];\nif (nights.length) parts.push(`Failed ${failed} of the last ${nights.length} nights`);\nif (failure?.flaky_candidate) parts.push('passed on retry');\nconst evidence = parts.length ? `${parts.join(', ')}.` : 'No retry pass or earlier failure recorded; marked flaky by a QA member.';\nconst deadline = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);\nconst shown = new Date(`${deadline}T12:00:00Z`).toLocaleString('en-US', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });\nlet listed = {};\ntry { listed = JSON.parse(s.account_map || '{}'); } catch { listed = {}; }\nconst users = $('Jira user').first().json.body;\nconst accountId = listed[r.actor_email.toLowerCase()] || (Array.isArray(users) && users[0] ? users[0].accountId : '');\nconst runUrl = `https://github.com/${r.repo}/actions/runs/${r.nightly_run_id}`;\nconst thread = $('Slack link').first().json.permalink || '';\nconst description = { type: 'doc', version: 1, content: [\n  para(`Filed via QA bot, by ${r.actor_name} from Slack.`),\n  para(`Owner: ${owner} (from the flow inventory). Deadline: ${shown} (2 weeks).`),\n  para(`Marked flaky by ${r.actor_name}. ${evidence}`),\n  para('A quarantine PR will be opened; the test keeps gating until QA merges it.'),\n  para('Test: ', { type: 'text', text: r.test_id, marks: [{ type: 'code' }] }),\n  links([{ label: 'Nightly run', url: runUrl }, { label: 'Slack thread', url: thread }]),\n] };\nconst fields = { project: { key: s.project }, issuetype: { name: s.issue_type }, summary: `Flaky test: ${r.test_id}`.slice(0, 250),\n  labels: [s.label], duedate: deadline, description };\nreturn [{ json: { account_id: accountId, owner, deadline, evidence: evidence.slice(0, 300), thread, runUrl,\n  with_reporter: accountId ? { ...fields, reporter: { id: accountId } } : fields, without_reporter: fields } }];\n"
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000012",
+      "name": "Create with Reporter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/issue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: $json.with_reporter }) }}"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000013",
+      "name": "Created?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// 201: created. A refused Reporter (no \"Modify Reporter\" permission) means\n// create again without it, then comment. Any other error fails the run (W0).\nconst res = $input.first().json;\nif (res.statusCode === 201) return [{ json: { key: res.body.key, retry: false } }];\nconst errors = JSON.stringify(res.body?.errors ?? {});\nif (res.statusCode === 400 && /reporter/i.test(errors)) return [{ json: { key: '', retry: true } }];\nthrow new Error(`Jira refused the owner ticket (${res.statusCode}): ${errors.slice(0, 200)}`);\n"
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000014",
+      "name": "Reporter refused?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2600,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b1b2c3d4-0001-4000-8000-000000001401",
+              "leftValue": "={{ $json.retry }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000015",
+      "name": "Create without Reporter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2800,
+        -200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/issue",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ fields: $('Build task').first().json.without_reporter }) }}"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000016",
+      "name": "Created again?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "const res = $input.first().json;\nif (res.statusCode !== 201) throw new Error(`Jira refused the owner ticket (${res.statusCode}): ${JSON.stringify(res.body?.errors ?? {}).slice(0, 200)}`);\nreturn [{ json: { key: res.body.key, retry: false } }];\n"
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000017",
+      "name": "Read back",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3200,
+        -100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/issue/{{ $json.key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "reporter"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000018",
+      "name": "Verify reporter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// Read the bug back: is the member its Reporter?\nconst res = $input.first().json;\nif (res.statusCode !== 200) throw new Error(`Jira didn't return the new ticket (${res.statusCode})`);\nconst accountId = $('Build task').first().json.account_id;\nreturn [{ json: { key: res.body.key, reporter_ok: Boolean(accountId) && res.body.fields?.reporter?.accountId === accountId } }];\n"
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000019",
+      "name": "Reporter set?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3600,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b1b2c3d4-0001-4000-8000-000000001901",
+              "leftValue": "={{ $json.reporter_ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000020",
+      "name": "Filed-by comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3800,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// S20: the Reporter couldn't be set, so a comment names who filed it.\n\n// Atlassian Document Format helpers: a paragraph of text and links.\nconst text = (t) => ({ type: 'text', text: t });\nconst linkTo = (label, url) => ({ type: 'text', text: label, marks: [{ type: 'link', attrs: { href: url } }] });\nconst para = (...parts) => ({ type: 'paragraph', content: parts.map((x) => (typeof x === 'string' ? text(x) : x)) });\nconst links = (items) => para(...items.filter((l) => l.url).flatMap((l, i) => (i ? [' · ', linkTo(l.label, l.url)] : [linkTo(l.label, l.url)])));\n\nconst r = $('Reaction').first().json;\nreturn [{ json: { body: { type: 'doc', version: 1, content: [\n  para(`Filed by ${r.actor_name} (${r.actor_email}) via Slack. Jira didn't accept them as Reporter. Filed via QA bot.`)] } } }];\n"
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000021",
+      "name": "Add the comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4000,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/issue/{{ $('Verify reporter').first().json.key }}/comment",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000022",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4200,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// The owner ticket, and the quarantine-request (contracts/quarantine-request).\nconst v = $('Verify reporter').first().json;\nconst b = $('Build task').first().json;\nconst r = $('Reaction').first().json;\nconst s = $('Settings').first().json;\nconst request = { schema_version: 1, test_id: r.test_id, owner: b.owner, jira_key: v.key, deadline: b.deadline,\n  rerun_evidence: b.evidence.length >= 10 ? b.evidence : `${b.evidence} (flaky)`, marked_by: r.actor_email };\nif (b.thread) request.slack_thread = b.thread;\nrequest.run_url = b.runUrl;\nreturn [{ json: { stop: '', jira_key: v.key, url: `${s.jira_url}/browse/${v.key}`, reporter_ok: v.reporter_ok, request } }];\n"
+      }
+    },
+    {
+      "id": "b1b2c3d4-0001-4000-8000-000000000023",
+      "name": "Stopped",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { stop: $('Check owner').first().json.stop, jira_key: '', url: '', reporter_ok: false, request: null } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Reaction": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Inventory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inventory": {
+      "main": [
+        [
+          {
+            "node": "Quarantine list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quarantine list": {
+      "main": [
+        [
+          {
+            "node": "Check owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check owner": {
+      "main": [
+        [
+          {
+            "node": "Go on?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Go on?": {
+      "main": [
+        [
+          {
+            "node": "Read what",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Stopped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read what": {
+      "main": [
+        [
+          {
+            "node": "Failure list",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failure list": {
+      "main": [
+        [
+          {
+            "node": "Jira user",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira user": {
+      "main": [
+        [
+          {
+            "node": "Slack link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack link": {
+      "main": [
+        [
+          {
+            "node": "Build task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build task": {
+      "main": [
+        [
+          {
+            "node": "Create with Reporter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create with Reporter": {
+      "main": [
+        [
+          {
+            "node": "Created?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Created?": {
+      "main": [
+        [
+          {
+            "node": "Reporter refused?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reporter refused?": {
+      "main": [
+        [
+          {
+            "node": "Create without Reporter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create without Reporter": {
+      "main": [
+        [
+          {
+            "node": "Created again?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Created again?": {
+      "main": [
+        [
+          {
+            "node": "Read back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read back": {
+      "main": [
+        [
+          {
+            "node": "Verify reporter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify reporter": {
+      "main": [
+        [
+          {
+            "node": "Reporter set?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reporter set?": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Filed-by comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filed-by comment": {
+      "main": [
+        [
+          {
+            "node": "Add the comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add the comment": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}
