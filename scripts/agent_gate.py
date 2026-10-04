@@ -15,6 +15,8 @@ start: runs before any model call. Lets the run go on only when
   Writes proceed=true|false to GITHUB_OUTPUT, and run-outcome.json when it stops the run.
 
 finish: runs last, always. Writes run-outcome.json (unless `start` already did),
+  from $RUNNER_TEMP/agent-result.json when a workflow step decided how the run
+  ends ({"status", "reason", "pr_url"}), otherwise from its own arguments;
   checks it against contracts/run-outcome.schema.json; the workflow then uploads
   it as the artifact `run-outcome`.
 
@@ -29,6 +31,7 @@ import argparse
 import io
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -40,6 +43,7 @@ from validate_contract import CONTRACTS, ContractError, validate
 
 IST = timedelta(hours=5, minutes=30)
 EXCLUDED = {"capped", "disabled", "blocked"}
+TICKET = re.compile(r"^[A-Z][A-Z0-9]+-[0-9]+$")
 API = "https://api.github.com"
 
 
@@ -128,7 +132,7 @@ def write_outcome(workflow: str, ticket: str, status: str, reason: str = "", pr_
         "schema_version": 1,
         "workflow": workflow,
         "run_id": int(os.environ["GITHUB_RUN_ID"]),
-        "ticket_key": ticket,
+        "ticket_key": ticket if TICKET.match(ticket) else "",  # an invalid key is never recorded
         "status": status,
         "reason": reason,
         **({"pr_url": pr_url} if pr_url else {}),
@@ -186,9 +190,13 @@ def start(ticket: str, github: GitHub | None = None, now: datetime | None = None
 
 def finish(ticket: str, status: str, reason: str, pr_url: str) -> int:
     workflow = workflow_name(os.environ["GITHUB_WORKFLOW_REF"])
+    decided = Path(os.environ.get("RUNNER_TEMP", ".")) / "agent-result.json"
     if outcome_file().exists():  # the first step already ended the run
         outcome = json.loads(outcome_file().read_text(encoding="utf-8"))
     else:
+        if decided.exists():  # a workflow step decided how the run ends
+            result = json.loads(decided.read_text(encoding="utf-8"))
+            status, reason, pr_url = result["status"], result.get("reason", ""), result.get("pr_url", "")
         try:
             outcome = write_outcome(workflow, ticket, status, reason, pr_url)
         except ContractError as e:
