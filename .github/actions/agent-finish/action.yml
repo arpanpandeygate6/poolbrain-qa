@@ -1,0 +1,37 @@
+name: Agent last step
+description: >-
+  Saves how the run ended as the artifact `run-outcome` (Story 4.4). Run it last
+  in every agent workflow with `if: always()`, so it also runs after errors.
+  When the first step already ended the run (disabled, capped, broken caps),
+  its outcome is kept.
+inputs:
+  ticket:
+    description: Jira key the run is for
+    default: ""
+  status:
+    description: "ok, blocked or error (for example from job.status: success gives ok, anything else error)"
+    required: true
+  reason:
+    description: Machine reason, for example cases-not-merged (empty for ok)
+    default: ""
+  pr-url:
+    description: Link to the PR the run opened, if any
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Write run-outcome
+      shell: bash
+      env:
+        TICKET: ${{ inputs.ticket }}
+        STATUS: ${{ inputs.status }}
+        REASON: ${{ inputs.reason }}
+        PR_URL: ${{ inputs.pr-url }}
+      run: python scripts/agent_gate.py finish --ticket "$TICKET" --status "$STATUS" --reason "$REASON" --pr-url "$PR_URL"
+
+    - name: Save run-outcome
+      uses: actions/upload-artifact@v4
+      with:
+        name: run-outcome
+        path: ${{ runner.temp }}/run-outcome.json
+        retention-days: 30

@@ -1,0 +1,38 @@
+name: Agent first step
+description: >-
+  Kill switch and daily cap (Story 4.4). Run it first in every agent workflow,
+  before any model call, and run the next steps only when `proceed` is 'true'.
+  Needs a checkout and Python, and `permissions: actions: read` to count runs.
+inputs:
+  ticket:
+    description: Jira key the run is for (empty when there is none, for example triage)
+    default: ""
+  agent-enabled:
+    description: Pass vars.AGENT_ENABLED
+    default: ""
+  agent-caps:
+    description: Pass vars.AGENT_CAPS
+    default: ""
+  token:
+    description: Token that can read this repository's Actions runs and artifacts
+    default: ${{ github.token }}
+outputs:
+  proceed:
+    description: "'true' when AI work is on and today's limit is not reached"
+    value: ${{ steps.gate.outputs.proceed }}
+runs:
+  using: composite
+  steps:
+    - name: Install the contract validator
+      shell: bash
+      run: pip install -q "$(grep -i '^jsonschema==' api-tests/requirements.txt)"
+
+    - name: Check the kill switch and today's limit
+      id: gate
+      shell: bash
+      env:
+        AGENT_ENABLED: ${{ inputs.agent-enabled }}
+        AGENT_CAPS: ${{ inputs.agent-caps }}
+        GITHUB_TOKEN: ${{ inputs.token }}
+        TICKET: ${{ inputs.ticket }}
+      run: python scripts/agent_gate.py start --ticket "$TICKET"

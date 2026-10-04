@@ -252,6 +252,55 @@ Run it after PR 1 (the case file) is merged. It:
 
 **Checked on 4 Oct 2026 (dry run, not committed):** following the command's steps for the made-up case file PM-9001 (3 cases: job type required) produced 3 pytest tests. Flow tags, collection, type check, `ruff` and the case-file check passed, and all 3 tests passed against the pretend PoolBrain, started with made-up accounts. The "not merged on main" guard stopped as it should. The dry-run files were deleted. Still to do: a real run on a ticket whose PR 1 the QA lead has merged.
 
+## Agent workflows in GitHub: identity, first step and run-outcome (Story 4.4)
+
+**Every agent workflow** (`draft-cases`, `generate-tests`, `triage`, `quarantine`) starts and ends with the same two steps:
+
+```yaml
+permissions:
+  actions: read          # to count today's runs
+  contents: read
+steps:
+  - uses: actions/checkout@v5
+    with: { persist-credentials: false }
+  - uses: actions/setup-python@v6
+    with: { python-version-file: .python-version }
+  - id: gate
+    uses: ./.github/actions/agent-start
+    with:
+      ticket: ${{ inputs.ticket }}
+      agent-enabled: ${{ vars.AGENT_ENABLED }}
+      agent-caps: ${{ vars.AGENT_CAPS }}
+  # ... every AI step has: if: steps.gate.outputs.proceed == 'true'
+  - if: always()
+    uses: ./.github/actions/agent-finish
+    with:
+      ticket: ${{ inputs.ticket }}
+      status: ${{ job.status == 'success' && 'ok' || 'error' }}
+```
+
+- **First step** (`scripts/agent_gate.py start`), before any model call:
+  - If `AGENT_ENABLED` isn't exactly `true`, the run ends as `disabled` ("Result: Not run (agent is turned off)").
+  - If `AGENT_CAPS` is missing, broken or has no entry for the workflow, the run ends as `error` with the reason, and the job fails.
+  - If today's runs (since 00:00 IST, with the rule shared with n8n and tested against `contracts/cap-count.fixture.json`) are at the limit, the run ends as `capped` ("Result: Waiting until tomorrow (daily limit reached)", with the limit and the count).
+  - It reads earlier runs' outcomes from their `run-outcome` artifacts, downloading without sending the GitHub token to the artifact storage.
+- **Last step** (`scripts/agent_gate.py finish`, `if: always()`): writes `run-outcome.json` following `contracts/run-outcome.schema.json` (status `ok`, `blocked`, `capped`, `disabled` or `error`, a reason, an optional PR link and the UTC time), checks it, and uploads it as the artifact `run-outcome` for 30 days. When the first step already ended the run, its outcome is kept.
+
+### Setup still to do (people, not code)
+
+Nothing below exists yet. The code above is ready for it.
+
+1. **Repository variables** (QA lead), under **Settings → Secrets and variables → Actions → Variables**: `AGENT_ENABLED` = `true` and `AGENT_CAPS` = `{"draft-cases": 20, "generate-tests": 20, "triage": 2, "quarantine": 5}`. Only people change them. Until they exist, every agent run ends as `disabled` and n8n's gate counts AI work as off.
+2. **GitHub App `qa-agent`** (the agent's own identity, like `qa-relay`): create it under the repository owner's **Settings → Developer settings → GitHub Apps**. Webhooks off. Repository permissions: **Contents: read and write** and **Pull requests: read and write** only, with **no Actions permission**. Install it only on this repository. Keep its app ID and a private key for step 4.
+3. **Claude token:** on a laptop logged in to the ai.team Claude Max account, run `claude setup-token` and keep the token for step 4. It lasts a year: the QA lead owns renewing it (put a reminder 11 months out), and so the agent stops working when it expires. **Before using it in CI, the QA lead confirms that using the Claude Max subscription in scheduled GitHub runs is within its terms (PRD assumption A7).** Max usage is shared with people's own Claude Code use.
+4. **Where the three secrets live** (`CLAUDE_CODE_OAUTH_TOKEN`, the `qa-agent` app ID and private key): the plan is an `agent` Environment restricted to `main`. GitHub Free has none for private repositories, so **the team decides** and records the decision here before anything is added. A repository secret is readable by any workflow on any branch that someone with write access pushes, so if that is the choice, agent workflows must run only from `main` (`workflow_dispatch` on `main`), and PRs that change `.github/` get extra review.
+
+**Owner:** the QA lead owns the variables, the `qa-agent` app and the yearly token renewal.
+
+**Stopping AI work:** set `AGENT_ENABLED` to `false` (see "Kill switch and daily limits"). **Stopping one run already going:** open it on the Actions tab and click **Cancel workflow**.
+
+**Checked on 4 Oct 2026 (unit tests only, as no agent workflow exists yet):** the counting rule passes every case in the shared fixture. Each way of stopping (switch off or any other value, limit reached with outcomes read from artifacts, broken or missing limits) stops before GitHub or a model is asked, and writes a valid `run-outcome`. The first live run will be the `draft-cases` workflow (Story 4.5).
+
 ## Kill switch and daily limits (Story 5.6)
 
 **Turning AI work off and on.** In GitHub: **Settings → Secrets and variables → Actions → Variables**, the repository variable `AGENT_ENABLED`. Only the exact value `true` lets AI work run. `false`, any other value, or no variable at all counts as off. Only people change it (the QA lead or n8n maintainer), never a workflow.
