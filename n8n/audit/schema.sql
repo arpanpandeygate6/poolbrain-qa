@@ -198,3 +198,8 @@ GRANT SELECT, INSERT, UPDATE ON audit.reaction_decisions TO audit_writer;
 -- For 🐞 (Story 6.4): the failure's flow and the drafted bug title, from W3.
 ALTER TABLE audit.message_map ADD COLUMN IF NOT EXISTS flow_id text NOT NULL DEFAULT '';
 ALTER TABLE audit.message_map ADD COLUMN IF NOT EXISTS bug_title text NOT NULL DEFAULT '';
+
+-- Undo (Story 6.8): who undid a decision, and whether the "undo is closed"
+-- reply was already posted for it. Nothing is deleted.
+ALTER TABLE audit.reaction_decisions ADD COLUMN IF NOT EXISTS undone_by text NOT NULL DEFAULT '';
+ALTER TABLE audit.reaction_decisions ADD COLUMN IF NOT EXISTS undo_closed_noted boolean NOT NULL DEFAULT false;
