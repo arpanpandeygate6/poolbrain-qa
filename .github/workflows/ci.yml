@@ -61,6 +61,9 @@ jobs:
       - name: Masking patterns pinned in n8n
         run: python scripts/check_masking_hash.py
 
+      - name: Case files
+        run: python scripts/case_lint.py
+
       - name: Test helper unit tests
         working-directory: api-tests
         run: python -m pytest unit -p no:cacheprovider

@@ -199,6 +199,45 @@ Nothing else changes: every workflow starts posting. Running `n8n/slack-setup.sh
 
 **Checked on 4 Oct 2026:** a throwaway scheduled workflow failed with an error containing a Slack token, an email, a URL query and a stack trace. W0 ran within a second and produced the preview "Alert: n8n workflow error in Throwaway W0 test / Step: call Jira. Error: Jira returned 403 for token [hidden] and [email] at https://x.atlassian.net/rest [line 1]. / Time: 04 Oct 20:59 IST.", with none of the secrets in the execution data, and wrote an `error-alert-preview` audit entry. The throwaway workflow was then deleted.
 
+## AI agent on laptops (Stories 4.1 and 4.2)
+
+**House rules.** `CLAUDE.md` at the repository root holds the rules Claude Code follows here: the folder layout, the naming conventions and the hard rules (never touch PROD data; changes only through PRs; tests call only the helpers; one flow tag per test; never weaken a test to make it pass; never read `.env` files; laptops run UAT only; no Jira, Slack or web tools; the existing Gate6 QA Agent is not used or changed). To check them, ask Claude Code "explain the house rules for this repo": its answer must match `CLAUDE.md`.
+
+**What the repository blocks** (`.claude/settings.json`, committed):
+- claude.ai connectors are switched off (`disableClaudeAiConnectors`);
+- every MCP tool (`mcp__*`), web fetch, web search, `curl` and `wget` are denied;
+- reading or editing `.env`, `.env.uat`, `.env.preprod`, `.env.prod`, `.env.npp` and `.env.local` is denied, including through common shell commands (`cat`, `head`, `grep`, `sed`, `cp`, `base64` and others). Shell denies can't cover every possible command, so the rule in `CLAUDE.md` still matters.
+
+Plugins synced from the organisation's claude.ai account (for example the "design" plugin, which brings Slack, Atlassian, Asana, Figma, Notion and other MCP servers) can still **load** in a session, even though the deny list stops their tools being used. The laptop check below counts a loaded tool as a fail.
+
+### Laptop connector check
+
+Do this on each QA laptop before it is used for agent work, and again after Claude Code or plugin changes:
+
+1. Log in to Claude Code with the ai.team Claude Max account, and make sure no API key is set (`echo $ANTHROPIC_API_KEY` prints nothing).
+2. Start a **fresh** session in the repository folder.
+3. Type `/mcp`: no server may be listed as connected. Type `/context`: the tools list must show no MCP tools.
+4. Ask: "read api-tests/.env.uat". It must be refused.
+5. Write the result in the table. **A laptop that fails is not used for agent work** until it is fixed (switch off the plugin for this project with `/plugin`, or ask the claude.ai organisation admin to stop syncing it) and checked again.
+
+| Laptop owner | Date | Claude Code version | Result | Notes |
+|---|---|---|---|---|
+| (developer Mac, ai.team) | | | **Not checked yet** | Organisation-synced plugins are installed ("design" with Slack, Atlassian and other MCP servers): expect a fail until they are switched off for this project |
+
+### `/draft-cases <KEY>` (Story 4.2)
+
+Run it in Claude Code in the repository. It asks you to paste the ticket text, because it has no Jira access, and then:
+1. starts the branch `agent/<KEY>-cases` from the latest `main`;
+2. picks the flows from `flows/inventory.yaml`, or stops and asks you if none fits (it never invents one);
+3. writes `cases/<KEY>.md` (format in `cases/README.md`) and `cases/<KEY>.questions.json` (clarification questions, or an empty list);
+4. checks both with `scripts/validate_contract.py` and `scripts/case_lint.py`;
+5. commits, pushes and opens PR 1 titled `[<KEY>] Cases: …` with the body from `.github/PULL_REQUEST_TEMPLATE/cases.md`. Without the GitHub CLI (`gh`), it prints a link that opens the PR form, plus the title and body to paste;
+6. ends with the case count, the PR link and "Next: review and merge PR 1 in GitHub."
+
+`ci` runs `scripts/case_lint.py` on every PR. It fails on missing front matter, a `ticket` that doesn't match the file name, an unknown flow, a layer other than `api`, `db` or `ui`, misnumbered cases, a case missing a part, or a missing or invalid questions file.
+
+**Still to do: the end-to-end try with a real ticket.** The QA lead picks a ticket, a QA member runs `/draft-cases` on it, and the QA lead confirms the drafted cases make sense. Adjust `CLAUDE.md` or `.claude/commands/draft-cases.md` until they do. Checked on 4 Oct 2026 without a real ticket: a case file and questions file drafted by following the command's steps for a made-up ticket passed both checks. It was written outside the repository and not committed.
+
 ## Kill switch and daily limits (Story 5.6)
 
 **Turning AI work off and on.** In GitHub: **Settings → Secrets and variables → Actions → Variables**, the repository variable `AGENT_ENABLED`. Only the exact value `true` lets AI work run. `false`, any other value, or no variable at all counts as off. Only people change it (the QA lead or n8n maintainer), never a workflow.

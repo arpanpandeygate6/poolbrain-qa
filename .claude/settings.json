@@ -29,7 +29,24 @@
       "Edit(**/.env.uat)",
       "Edit(**/.env.preprod)",
       "Edit(**/.env.prod)",
-      "Edit(**/.env.npp)"
+      "Edit(**/.env.npp)",
+      "mcp__*",
+      "WebSearch",
+      "Bash(cat *.env*)",
+      "Bash(head *.env*)",
+      "Bash(tail *.env*)",
+      "Bash(less *.env*)",
+      "Bash(more *.env*)",
+      "Bash(grep *.env*)",
+      "Bash(sed *.env*)",
+      "Bash(awk *.env*)",
+      "Bash(source *.env*)",
+      "Bash(cp *.env*)",
+      "Bash(base64 *.env*)",
+      "Bash(xxd *.env*)",
+      "Bash(strings *.env*)",
+      "Read(**/.env.local)",
+      "Edit(**/.env.local)"
     ]
   }
 }
