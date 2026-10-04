@@ -182,7 +182,7 @@
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- Mapped messages up to 7 days old, each with its live (not undone) decision.\nSELECT coalesce(json_agg(json_build_object(\n         'map_id', m.id, 'channel', m.channel, 'ts', m.ts, 'kind', m.kind, 'test_id', m.test_id, 'ticket', m.ticket,\n         'nightly_run_id', m.nightly_run_id::text, 'class', m.class, 'thread_ts', m.thread_ts,\n         'source_run_id', m.source_run_id::text, 'flow_id', m.flow_id, 'bug_title', m.bug_title,\n         'jira_wait_until', (SELECT to_char(q.not_before AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM audit.deferred_requests q\n                             WHERE q.action = 'jira-write' AND q.target = 'reaction-' || m.id AND q.done_at IS NULL LIMIT 1),\n         'decision', CASE WHEN d.id IS NULL THEN NULL ELSE json_build_object(\n           'id', d.id, 'action', d.action, 'state', d.state, 'actor_id', d.actor_id, 'actor_email', d.actor_email,\n           'actor_name', d.actor_name, 'prompt_ts', d.prompt_ts) END) ORDER BY m.id), '[]') AS messages\nFROM audit.message_map m\nLEFT JOIN audit.reaction_decisions d ON d.map_id = m.id AND d.undone_at IS NULL\nWHERE m.created_at > now() - interval '7 days';",
+        "query": "-- Mapped messages up to 7 days old, each with its live (not undone) decision.\nSELECT coalesce(json_agg(json_build_object(\n         'map_id', m.id, 'channel', m.channel, 'ts', m.ts, 'kind', m.kind, 'test_id', m.test_id, 'ticket', m.ticket,\n         'nightly_run_id', m.nightly_run_id::text, 'class', m.class, 'thread_ts', m.thread_ts,\n         'source_run_id', m.source_run_id::text, 'flow_id', m.flow_id, 'bug_title', m.bug_title,\n         'jira_wait_until', (SELECT to_char(q.not_before AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM audit.deferred_requests q\n                             WHERE q.action = 'jira-write' AND q.target = 'reaction-' || m.id AND q.done_at IS NULL LIMIT 1),\n         'decision', CASE WHEN d.id IS NULL THEN NULL ELSE json_build_object(\n           'id', d.id, 'action', d.action, 'state', d.state, 'actor_id', d.actor_id, 'actor_email', d.actor_email,\n           'actor_name', d.actor_name, 'prompt_ts', d.prompt_ts, 'jira_key', d.jira_key, 'link', d.link,\n           'handled_at', to_char(d.handled_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), 'undo_closed_noted', d.undo_closed_noted,\n           'undo_wait_until', (SELECT to_char(q.not_before AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM audit.deferred_requests q\n                               WHERE q.action = 'jira-write' AND q.target = 'undo-' || d.id AND q.done_at IS NULL LIMIT 1)) END,\n         -- Reactions already used by undone decisions: they don't count again (Story 6.8).\n         'used', coalesce((SELECT json_agg(json_build_object('action', u.action, 'actor_id', u.actor_id, 'undone_by', u.undone_by))\n                           FROM audit.reaction_decisions u WHERE u.map_id = m.id AND u.undone_at IS NOT NULL), '[]')\n         ) ORDER BY m.id), '[]') AS messages\nFROM audit.message_map m\nLEFT JOIN audit.reaction_decisions d ON d.map_id = m.id AND d.undone_at IS NULL\nWHERE m.created_at > now() - interval '7 days';",
         "options": {}
       },
       "credentials": {
@@ -629,7 +629,7 @@
         -100
       ],
       "parameters": {
-        "jsCode": "// The first reaction Slack lists that is valid for the message kind and was\n// added by a QA group member (EXPERIENCE.md, reaction legend). Other emoji,\n// reactions from anyone else, and any later reactions are ignored; ↩️ is\n// handled by the undo step (Story 6.8).\n// Slack names copied from contracts/vocabulary.json (reactions[*].slack_names);\n// scripts/tests/test_n8n_workflows.py checks the copy.\nconst REACTIONS = {\"bug\": {\"names\": [\"lady_beetle\", \"ladybug\", \"beetle\"], \"valid_on\": [\"failure\"]}, \"flaky\": {\"names\": [\"repeat\"], \"valid_on\": [\"failure\"]}, \"environment\": {\"names\": [\"lightning\", \"lightning_cloud\", \"cloud_with_lightning\"], \"valid_on\": [\"failure\"]}, \"ignore\": {\"names\": [\"see_no_evil\"], \"valid_on\": [\"failure\"]}, \"approve\": {\"names\": [\"white_check_mark\"], \"valid_on\": [\"questions\"]}, \"undo\": {\"names\": [\"leftwards_arrow_with_hook\"], \"valid_on\": [\"failure\", \"questions\"]}};\nconst members = new Set($('QA members').first().json.members);\nconst messages = $('To check').all();\nconst actionOf = (name, kind) => Object.entries(REACTIONS)\n  .find(([action, r]) => action !== 'undo' && r.valid_on.includes(kind) && r.names.includes(name.split('::')[0]))?.[0];\nreturn $input.all().flatMap((page, i) => {\n  const m = messages[i].json;\n  for (const reaction of page.json.message?.reactions ?? []) {\n    const action = actionOf(reaction.name ?? '', m.kind);\n    const user = action ? (reaction.users ?? []).find((u) => members.has(u)) : undefined;\n    if (user) return [{ json: { ...m, action, actor_id: user } }];\n  }\n  return [];\n});\n"
+        "jsCode": "// The first reaction Slack lists that is valid for the message kind and was\n// added by a QA group member (EXPERIENCE.md, reaction legend). Other emoji,\n// reactions from anyone else, and any later reactions are ignored; ↩️ is\n// handled by the undo step (Story 6.8).\n// Slack names copied from contracts/vocabulary.json (reactions[*].slack_names);\n// scripts/tests/test_n8n_workflows.py checks the copy.\nconst REACTIONS = {\"bug\": {\"names\": [\"lady_beetle\", \"ladybug\", \"beetle\"], \"valid_on\": [\"failure\"]}, \"flaky\": {\"names\": [\"repeat\"], \"valid_on\": [\"failure\"]}, \"environment\": {\"names\": [\"lightning\", \"lightning_cloud\", \"cloud_with_lightning\"], \"valid_on\": [\"failure\"]}, \"ignore\": {\"names\": [\"see_no_evil\"], \"valid_on\": [\"failure\"]}, \"approve\": {\"names\": [\"white_check_mark\"], \"valid_on\": [\"questions\"]}, \"undo\": {\"names\": [\"leftwards_arrow_with_hook\"], \"valid_on\": [\"failure\", \"questions\"]}};\nconst members = new Set($('QA members').first().json.members);\nconst messages = $('To check').all();\nconst actionOf = (name, kind) => Object.entries(REACTIONS)\n  .find(([action, r]) => action !== 'undo' && r.valid_on.includes(kind) && r.names.includes(name.split('::')[0]))?.[0];\nreturn $input.all().flatMap((page, i) => {\n  const m = messages[i].json;\n  // After an undo, the same person's same reaction is used up (Slack keeps it on the message).\n  const used = new Set((m.used ?? []).map((u) => `${u.action} ${u.actor_id}`));\n  for (const reaction of page.json.message?.reactions ?? []) {\n    const action = actionOf(reaction.name ?? '', m.kind);\n    const user = action ? (reaction.users ?? []).find((u) => members.has(u) && !used.has(`${action} ${u}`)) : undefined;\n    if (user) return [{ json: { ...m, action, actor_id: user } }];\n  }\n  return [];\n});\n"
       }
     },
     {
@@ -1796,13 +1796,753 @@
       }
     },
     {
+      "id": "e3b2c3d4-0001-4000-8000-000000000060",
+      "name": "Undo candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        350
+      ],
+      "parameters": {
+        "jsCode": "// Messages whose live decision is handled: is there a new ↩️?\nconst list = (v) => (Array.isArray(v) ? v : JSON.parse(v || '[]'));\nreturn list($('Load messages').first().json.messages)\n  .filter((m) => m.decision && m.decision.state === 'handled' && m.decision.handled_at)\n  .map((m) => ({ json: m }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000061",
+      "name": "Undo reactions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        350
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/reactions.get",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $json.ts }}"
+            },
+            {
+              "name": "full",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000062",
+      "name": "Undo found",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        350
+      ],
+      "parameters": {
+        "jsCode": "// A ↩️ from a QA member who hasn't already used theirs on this message. Within\n// 24 hours of the action: undo it. Later: say once that undo is closed.\nconst UNDO = [\"leftwards_arrow_with_hook\"];\nconst members = new Set($('QA members').first().json.members);\nconst messages = $('Undo candidates').all();\nconst now = Date.now();\nreturn $input.all().flatMap((page, i) => {\n  const m = messages[i].json;\n  const usedUndo = new Set((m.used ?? []).map((u) => u.undone_by));\n  const reaction = (page.json.message?.reactions ?? []).find((r) => UNDO.includes((r.name ?? '').split('::')[0]));\n  const user = (reaction?.users ?? []).find((u) => members.has(u) && !usedUndo.has(u));\n  if (!user) return [];\n  const within = now - Date.parse(m.decision.handled_at) <= 24 * 3600000;\n  if (!within && m.decision.undo_closed_noted) return [];\n  if (within && m.decision.undo_wait_until && Date.parse(m.decision.undo_wait_until) > now) return [];\n  return [{ json: { ...m, undo_actor: user, mode: within ? 'undo' : 'closed' } }];\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000063",
+      "name": "Who undid",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        350
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/users.info",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user",
+              "value": "={{ $json.undo_actor }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000064",
+      "name": "Undos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        350
+      ],
+      "parameters": {
+        "jsCode": "const found = $('Undo found').all();\nreturn $input.all().map((user, i) => {\n  const profile = user.json.user?.profile ?? {};\n  const m = found[i].json;\n  return { json: { ...m, undo_email: profile.email || `${m.undo_actor}@slack.invalid`,\n    undo_name: profile.display_name || profile.real_name || user.json.user?.name || m.undo_actor } };\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000065",
+      "name": "Too late",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        300
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().filter((u) => u.json.mode === 'closed');\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000066",
+      "name": "Note closed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2800,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH noted AS (\n  UPDATE audit.reaction_decisions SET undo_closed_noted = true WHERE id = $1::bigint AND NOT undo_closed_noted RETURNING id\n)\nSELECT (SELECT id FROM noted) AS id;",
+        "options": {
+          "queryReplacement": "={{ [$json.decision.id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000067",
+      "name": "Closed replies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// S6, too late (EXPERIENCE.md M6), once per decision.\nconst closed = $('Too late').all();\nreturn $input.all().flatMap((row, i) => {\n  if (!row.json.id) return [];\n  const u = closed[i].json;\n  const item = u.decision.jira_key ? `${u.decision.jira_key} in Jira` : `the ${u.decision.action === 'environment' ? '🌩️ Environment' : '🙈 Ignore'} decision`;\n  return [{ json: { kind: '', header: 'Undo is closed for this message',\n    body: `Undo is closed for this message (more than 24 hours). Ask the QA lead to change ${item} by hand.`,\n    todo: '', todo_label: '', links: [], legend: '', thread_ts: u.thread_ts || u.ts } }];\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000068",
+      "name": "Post closed reply",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3200,
+        300
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "todo_label": "={{ $json.todo_label }}",
+            "links": "={{ $json.links }}",
+            "legend": "={{ $json.legend }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "legend",
+              "displayName": "legend",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000069",
+      "name": "Jira undos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        380
+      ],
+      "parameters": {
+        "jsCode": "// Undoing 🐞, 🔁 or ✅ changes Jira: through the gate (a Jira write).\nreturn $input.all().filter((u) => u.json.mode === 'undo' && ['bug', 'flaky', 'approve'].includes(u.json.decision.action)\n  && (u.json.decision.jira_key || u.json.decision.action !== 'flaky'))\n  .map((u) => ({ json: { ...u.json, gate: { action: 'jira-write', workflow: '', target: `undo-${u.json.decision.id}`,\n    payload: { decision_id: u.json.decision.id } } } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000070",
+      "name": "Undo to the gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        380
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().map((u) => ({ json: u.json.gate }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000071",
+      "name": "Undo gate",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3000,
+        380
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "gateCheck0000001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "={{ $json.action }}",
+            "workflow": "={{ $json.workflow }}",
+            "target": "={{ $json.target }}",
+            "payload": "={{ $json.payload }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "payload",
+              "displayName": "payload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000072",
+      "name": "Allowed undos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        380
+      ],
+      "parameters": {
+        "jsCode": "const undos = $('Jira undos').all();\nreturn $input.all().flatMap((a, i) => (a.json.allowed === true ? [{ json: { ...undos[i].json, action: undos[i].json.decision.action,\n  jira_key: undos[i].json.decision.jira_key, actor_name: undos[i].json.undo_name, repo: $('Settings').first().json.repo } }] : []));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000073",
+      "name": "Reverse in Jira",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3400,
+        380
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "rxUndo0000000001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "={{ $json.action }}",
+            "jira_key": "={{ $json.jira_key }}",
+            "actor_name": "={{ $json.actor_name }}",
+            "repo": "={{ $json.repo }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "jira_key",
+              "displayName": "jira_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_name",
+              "displayName": "actor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "repo",
+              "displayName": "repo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000074",
+      "name": "Undo results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        420
+      ],
+      "parameters": {
+        "jsCode": "// Every undo ready to record: Jira ones that went through (with what was\n// reversed), and 🌩️/🙈 (and a 🔁 that created nothing), which change only the record.\nconst WORDS = { environment: 'The 🌩️ Environment decision was marked reversed', ignore: 'The 🙈 Ignore decision was marked reversed',\n  flaky: 'The 🔁 Flaky reaction was marked reversed' };\nconst jira = $('Allowed undos').isExecuted ? $('Allowed undos').all().map((u, i) => ({ ...u.json, what: $('Reverse in Jira').all()[i].json.what })) : [];\nconst local = $('Undos').all().map((u) => u.json)\n  .filter((u) => u.mode === 'undo' && (['environment', 'ignore'].includes(u.decision.action) || (u.decision.action === 'flaky' && !u.decision.jira_key)))\n  .map((u) => ({ ...u, what: WORDS[u.decision.action] }));\nreturn [...local, ...jira].map((u) => ({ json: u }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000075",
+      "name": "Mark undone",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2800,
+        420
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- The decision is undone (never deleted), and a 🔁's quarantine request still\n-- waiting on the list is cancelled. Always one row back.\nWITH undone AS (\n  UPDATE audit.reaction_decisions SET undone_at = now(), undone_by = $2\n  WHERE id = $1::bigint AND undone_at IS NULL\n  RETURNING id, action, jira_key\n), cancelled AS (\n  UPDATE audit.deferred_requests SET done_at = now()\n  WHERE action = 'dispatch' AND workflow = 'quarantine' AND done_at IS NULL\n    AND target = (SELECT jira_key FROM undone WHERE action = 'flaky') AND target <> ''\n  RETURNING id\n)\nSELECT (SELECT id FROM undone) AS id, (SELECT count(*) FROM cancelled) AS cancelled;",
+        "options": {
+          "queryReplacement": "={{ [$json.decision.id, $json.undo_actor] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000076",
+      "name": "Undo replies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        420
+      ],
+      "parameters": {
+        "jsCode": "// S6 (EXPERIENCE.md M6), in the message's thread.\nconst results = $('Undo results').all();\nreturn $input.all().flatMap((row, i) => {\n  if (!row.json.id) return [];\n  const u = results[i].json;\n  return [{ json: { kind: '', header: `Undone by ${u.undo_name}`,\n    body: `Undone by <@${u.undo_actor}>. ${u.what}. Nothing was deleted.\\nYou can now react again on the message above.`,\n    todo: '', todo_label: '', links: u.decision.link ? [{ label: u.decision.jira_key ? `Jira ${u.decision.jira_key}` : 'Link', url: u.decision.link }] : [],\n    legend: '', thread_ts: u.thread_ts || u.ts } }];\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000077",
+      "name": "Post undo reply",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3200,
+        420
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "todo_label": "={{ $json.todo_label }}",
+            "links": "={{ $json.links }}",
+            "legend": "={{ $json.legend }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "legend",
+              "displayName": "legend",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000078",
+      "name": "Undo audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        420
+      ],
+      "parameters": {
+        "jsCode": "const failed = $input.all().filter((p) => !p.json.posted && !p.json.preview);\nif (failed.length) throw new Error(`undo confirmation not posted: ${failed[0].json.error}`);\nreturn $('Undo results').all().map((u) => ({ json: { actor: u.json.undo_email, actor_type: 'human',\n  action: `undo-${u.json.decision.action}`, target: `${u.json.decision.jira_key || u.json.test_id || u.json.ticket}`, link: u.json.decision.link || '' } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000079",
+      "name": "Write undo audit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3600,
+        420
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
       "id": "e3b2c3d4-0001-4000-8000-000000000050",
       "name": "Due quarantines",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
         1600,
-        450
+        500
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -2197,12 +2937,214 @@
             "index": 0
           },
           {
+            "node": "Undo candidates",
+            "type": "main",
+            "index": 0
+          },
+          {
             "node": "Due quarantines",
             "type": "main",
             "index": 0
           },
           {
             "node": "Release the lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo candidates": {
+      "main": [
+        [
+          {
+            "node": "Undo reactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo reactions": {
+      "main": [
+        [
+          {
+            "node": "Undo found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo found": {
+      "main": [
+        [
+          {
+            "node": "Who undid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Who undid": {
+      "main": [
+        [
+          {
+            "node": "Undos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undos": {
+      "main": [
+        [
+          {
+            "node": "Too late",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Jira undos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Undo results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Too late": {
+      "main": [
+        [
+          {
+            "node": "Note closed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Note closed": {
+      "main": [
+        [
+          {
+            "node": "Closed replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closed replies": {
+      "main": [
+        [
+          {
+            "node": "Post closed reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira undos": {
+      "main": [
+        [
+          {
+            "node": "Undo to the gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo to the gate": {
+      "main": [
+        [
+          {
+            "node": "Undo gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo gate": {
+      "main": [
+        [
+          {
+            "node": "Allowed undos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed undos": {
+      "main": [
+        [
+          {
+            "node": "Reverse in Jira",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo results": {
+      "main": [
+        [
+          {
+            "node": "Mark undone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark undone": {
+      "main": [
+        [
+          {
+            "node": "Undo replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo replies": {
+      "main": [
+        [
+          {
+            "node": "Post undo reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post undo reply": {
+      "main": [
+        [
+          {
+            "node": "Undo audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo audit": {
+      "main": [
+        [
+          {
+            "node": "Write undo audit",
             "type": "main",
             "index": 0
           }

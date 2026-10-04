@@ -1472,3 +1472,118 @@ def test_w3b_due_quarantines_go_through_the_gate():
     assert [a["queue_id"] for a in run_code(code, {}, {"Due quarantines": due})] == [6]
     positions = {n["name"]: n["position"] for n in W3B["nodes"]}
     assert positions["To queue"][1] < positions["Jira replies"][1]  # queued before the reply can fail
+
+
+# ---------------------------------------------------------------- ↩️ Undo (Story 6.8)
+
+UNDO = workflow("reaction-undo.json")
+
+
+def ago(hours):
+    return datetime.fromtimestamp(datetime.now(UTC).timestamp() - hours * 3600, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@needs_node
+def test_used_reactions_dont_count_again():
+    m = {**mapped(1), "used": [{"action": "bug", "actor_id": "UQA", "undone_by": "UQA"}]}
+    reactions = [{"name": "lady_beetle", "users": ["UQA"]}, {"name": "lightning", "users": ["UQA"]}]
+    [out] = first_valid([m], [reactions])
+    assert (out["action"], out["actor_id"]) == ("environment", "UQA")
+    [out] = first_valid([m], [[{"name": "lady_beetle", "users": ["UQA", "UQB"]}]])
+    assert (out["action"], out["actor_id"]) == ("bug", "UQB")
+
+
+def undo_candidate(action="bug", hours=1, used=(), noted=False, jira_key="PM-9", wait=None):
+    decision = {"id": 40, "action": action, "state": "handled", "actor_id": "UQA", "jira_key": jira_key, "link": "https://jira/browse/PM-9",
+                "handled_at": ago(hours), "undo_closed_noted": noted, "undo_wait_until": wait}
+    return {**mapped(1), "decision": decision, "used": list(used)}
+
+
+def undo_found(candidate, reactions):
+    code = code_of(W3B, "Undo found").replace("$input.all()", json.dumps([{"json": {"message": {"reactions": reactions}}}]))
+    return run_code(code, {}, {"Undo candidates": [candidate], "QA members": {"members": ["UQA", "UQB"]}})
+
+
+@needs_node
+def test_undo_window_members_and_used_undos():
+    undo = [{"name": "leftwards_arrow_with_hook", "users": ["UQB"]}]
+    [u] = undo_found(undo_candidate(hours=23), undo)
+    assert (u["mode"], u["undo_actor"]) == ("undo", "UQB")
+    [u] = undo_found(undo_candidate(hours=25), undo)
+    assert u["mode"] == "closed"
+    assert undo_found(undo_candidate(hours=25, noted=True), undo) == []  # "closed" is said once
+    assert undo_found(undo_candidate(), [{"name": "leftwards_arrow_with_hook", "users": ["UOUTSIDER"]}]) == []
+    assert undo_found(undo_candidate(used=[{"action": "bug", "actor_id": "UQA", "undone_by": "UQB"}]), undo) == []
+    assert undo_found(undo_candidate(), [{"name": "lady_beetle", "users": ["UQB"]}]) == []
+    later = datetime.fromtimestamp(datetime.now(UTC).timestamp() + 600, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert undo_found(undo_candidate(wait=later), undo) == []
+
+
+@needs_node
+def test_undo_routes_jira_and_local_undos():
+    undos = [{**undo_candidate("bug"), "mode": "undo"}, {**undo_candidate("environment", jira_key=""), "mode": "undo"},
+             {**undo_candidate("flaky", jira_key=""), "mode": "undo"}, {**undo_candidate("approve", jira_key="PM-1"), "mode": "undo"},
+             {**undo_candidate("bug"), "mode": "closed"}]
+    jira = run_code(code_of(W3B, "Jira undos").replace("$input.all()", json.dumps([{"json": u} for u in undos])), {})
+    assert [j["decision"]["action"] for j in jira] == ["bug", "approve"]
+    assert jira[0]["gate"] == {"action": "jira-write", "workflow": "", "target": "undo-40", "payload": {"decision_id": 40}}
+    full = [{**u, "undo_actor": "UQB", "undo_name": "Ravi", "undo_email": "ravi@gate6.com"} for u in undos]
+    nodes = {"Undos": full, "Allowed undos": [{**full[0], "action": "bug", "jira_key": "PM-9"}],
+             "Reverse in Jira": [{"what": "PM-9 marked as undone in Jira (moved to Won't Do)"}]}
+    results = run_code(code_of(W3B, "Undo results"), {}, nodes)
+    assert [r["what"] for r in results] == ["The 🌩️ Environment decision was marked reversed", "The 🔁 Flaky reaction was marked reversed",
+                                            "PM-9 marked as undone in Jira (moved to Won't Do)"]
+    code = code_of(W3B, "Undo replies").replace("$input.all()", json.dumps([{"json": {"id": 40}}, {"json": {"id": None}}, {"json": {"id": 41}}]))
+    replies = run_code(code, {}, {"Undo results": results})
+    assert [r["body"] for r in replies] == [
+        "Undone by <@UQB>. The 🌩️ Environment decision was marked reversed. Nothing was deleted.\nYou can now react again on the message above.",
+        "Undone by <@UQB>. PM-9 marked as undone in Jira (moved to Won't Do). Nothing was deleted.\nYou can now react again on the message above.",
+    ]
+
+
+@needs_node
+def test_undo_too_late_reply():
+    closed = [{**undo_candidate("bug", hours=30), "mode": "closed"}, {**undo_candidate("ignore", hours=30, jira_key=""), "mode": "closed"}]
+    code = code_of(W3B, "Closed replies").replace("$input.all()", json.dumps([{"json": {"id": 40}}, {"json": {"id": 41}}]))
+    out = run_code(code, {}, {"Too late": closed})
+    assert [o["body"] for o in out] == [
+        "Undo is closed for this message (more than 24 hours). Ask the QA lead to change PM-9 in Jira by hand.",
+        "Undo is closed for this message (more than 24 hours). Ask the QA lead to change the 🙈 Ignore decision by hand.",
+    ]
+
+
+@needs_node
+def test_undo_in_jira_never_deletes():
+    pick = code_of(UNDO, "Pick transition")
+    settings = {"close_names": "Won't Do,Cancelled,Canceled,Closed,Done"}
+    transitions = {"statusCode": 200, "body": {"transitions": [{"id": "11", "name": "Start", "to": {"name": "In Progress"}},
+                                                                {"id": "31", "name": "Finish", "to": {"name": "Done"}},
+                                                                {"id": "41", "name": "Cancel", "to": {"name": "Cancelled"}}]}}
+    nodes = {"Settings": settings, "Undo": {"jira_key": "PM-9"}}
+    assert run_code(pick, transitions, nodes) == [{"transition_id": "41", "transition_name": "Cancelled"}]
+    assert run_code(pick, {"statusCode": 200, "body": {"transitions": [{"id": "11", "to": {"name": "In Progress"}}]}}, nodes) == [
+        {"transition_id": "", "transition_name": ""}]
+    for action, words in (("bug", "Undone by Ravi via Slack within 24 hours of filing. Nothing was deleted."),
+                          ("approve", "These clarification questions were withdrawn by Ravi via Slack.")):
+        [c] = run_code(code_of(UNDO, "Undo comment"), {}, {"Undo": {"action": action, "actor_name": "Ravi"}})
+        assert words in json.dumps(c, ensure_ascii=False)
+    result = code_of(UNDO, "Result")
+    assert run_code(result, {}, {"Undo": {"action": "flaky", "jira_key": "PM-7"}, "Pick transition": {"transition_name": "Won't Do"},
+                                 "Find the PR": {"pr": 12}}) == [
+        {"what": "PM-7 marked as undone in Jira (moved to Won't Do), and its quarantine PR was labelled undo-requested"}]
+    assert run_code(result, {}, {"Undo": {"action": "approve", "jira_key": "PM-1"}}) == [
+        {"what": "The questions on PM-1 were marked withdrawn in a comment"}]
+    methods = {n["parameters"].get("method") for n in UNDO["nodes"] if n["type"] == "n8n-nodes-base.httpRequest"}
+    assert "DELETE" not in methods
+
+
+@needs_node
+def test_every_code_node_in_every_workflow_parses():
+    """A syntax error (like a name declared twice) would only show up when n8n runs that node."""
+    for path in sorted(WORKFLOWS.glob("*.json")):
+        for n in json.loads(path.read_text())["nodes"]:
+            if n["type"] != "n8n-nodes-base.code":
+                continue
+            script = f"new Function('$input', '$', '$json', {json.dumps(n['parameters']['jsCode'])});"
+            result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=False)
+            assert result.returncode == 0, f"{path.name} / {n['name']}: {result.stderr.strip().splitlines()[-1]}"

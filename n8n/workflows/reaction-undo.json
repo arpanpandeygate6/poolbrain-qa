@@ -1,0 +1,738 @@
+{
+  "id": "rxUndo0000000001",
+  "name": "Reaction: undo",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000001",
+      "name": "Undo",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "action",
+              "type": "string"
+            },
+            {
+              "name": "jira_key",
+              "type": "string"
+            },
+            {
+              "name": "actor_name",
+              "type": "string"
+            },
+            {
+              "name": "repo",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000002",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c2b2c3d4-0001-4000-8000-000000000200",
+              "name": "jira_url",
+              "value": "https://gatesix.atlassian.net",
+              "type": "string"
+            },
+            {
+              "id": "c2b2c3d4-0001-4000-8000-000000000201",
+              "name": "close_names",
+              "value": "Won't Do,Cancelled,Canceled,Closed,Done",
+              "type": "string"
+            },
+            {
+              "id": "c2b2c3d4-0001-4000-8000-000000000202",
+              "name": "undo_label",
+              "value": "qa-bot-undone",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000003",
+      "name": "A ticket to close?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c2b2c3d4-0001-4000-8000-000000000301",
+              "leftValue": "={{ ['bug', 'flaky'].includes($('Undo').first().json.action) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000004",
+      "name": "Transitions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/issue/{{ $('Undo').first().json.jira_key }}/transitions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000005",
+      "name": "Pick transition",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// The first available transition whose name is in close_names, in that order.\n// None available: the ticket keeps its status; the label and comment still record the undo.\nconst names = $('Settings').first().json.close_names.split(',').map((n) => n.trim().toLowerCase());\nconst res = $input.first().json;\nif (res.statusCode !== 200) throw new Error(`Jira didn't list the transitions of ${$('Undo').first().json.jira_key} (${res.statusCode})`);\nconst transitions = res.body.transitions ?? [];\nconst pick = names.map((n) => transitions.find((t) => (t.name ?? '').toLowerCase() === n || (t.to?.name ?? '').toLowerCase() === n))\n  .find(Boolean);\nreturn [{ json: { transition_id: pick ? pick.id : '', transition_name: pick ? (pick.to?.name || pick.name) : '' } }];\n"
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000006",
+      "name": "Can close?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        -200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c2b2c3d4-0001-4000-8000-000000000601",
+              "leftValue": "={{ $json.transition_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000007",
+      "name": "Close",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        -300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/issue/{{ $('Undo').first().json.jira_key }}/transitions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ transition: { id: $json.transition_id } }) }}"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000008",
+      "name": "Closed?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        -300
+      ],
+      "parameters": {
+        "jsCode": "const res = $input.first().json;\nif (![200, 201, 204].includes(res.statusCode)) throw new Error(`Jira refused the undo step for ${$('Undo').first().json.jira_key} (${res.statusCode}): ${JSON.stringify(res.body ?? {}).slice(0, 200)}`);\nreturn [{ json: { ok: true } }];\n"
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000009",
+      "name": "Label undone",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        -200
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/issue/{{ $('Undo').first().json.jira_key }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ update: { labels: [{ add: $('Settings').first().json.undo_label }] } }) }}"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000010",
+      "name": "Labelled?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "const res = $input.first().json;\nif (![200, 201, 204].includes(res.statusCode)) throw new Error(`Jira refused the undo step for ${$('Undo').first().json.jira_key} (${res.statusCode}): ${JSON.stringify(res.body ?? {}).slice(0, 200)}`);\nreturn [{ json: { ok: true } }];\n"
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000011",
+      "name": "A quarantine?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        -200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c2b2c3d4-0001-4000-8000-000000001101",
+              "leftValue": "={{ $('Undo').first().json.action === 'flaky' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000012",
+      "name": "Quarantine PR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Undo').first().json.repo }}/pulls",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "state",
+              "value": "open"
+            },
+            {
+              "name": "head",
+              "value": "={{ $('Undo').first().json.repo.split('/')[0] }}:agent/{{ $('Undo').first().json.jira_key }}-quarantine"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000013",
+      "name": "Find the PR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        -300
+      ],
+      "parameters": {
+        "jsCode": "// A 🔁's quarantine PR, if it is open: label it undo-requested.\nconst res = $input.first().json;\nconst pulls = res.statusCode === 200 && Array.isArray(res.body) ? res.body : [];\nreturn [{ json: { pr: pulls[0] ? pulls[0].number : 0, pr_url: pulls[0] ? pulls[0].html_url : '' } }];\n"
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000014",
+      "name": "PR open?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2600,
+        -300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c2b2c3d4-0001-4000-8000-000000001401",
+              "leftValue": "={{ $json.pr }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000015",
+      "name": "Label the PR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2800,
+        -400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Undo').first().json.repo }}/issues/{{ $json.pr }}/labels",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ labels: [\"undo-requested\"] }) }}"
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000016",
+      "name": "Undo comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The undo, recorded as a comment (nothing is deleted).\n\n// Atlassian Document Format helpers: a paragraph of text and links.\nconst text = (t) => ({ type: 'text', text: t });\nconst linkTo = (label, url) => ({ type: 'text', text: label, marks: [{ type: 'link', attrs: { href: url } }] });\nconst para = (...parts) => ({ type: 'paragraph', content: parts.map((x) => (typeof x === 'string' ? text(x) : x)) });\nconst links = (items) => para(...items.filter((l) => l.url).flatMap((l, i) => (i ? [' · ', linkTo(l.label, l.url)] : [linkTo(l.label, l.url)])));\n\nconst u = $('Undo').first().json;\nconst message = u.action === 'approve'\n  ? `These clarification questions were withdrawn by ${u.actor_name} via Slack. Please ignore them. — Filed via QA bot`\n  : `Undone by ${u.actor_name} via Slack within 24 hours of filing. Nothing was deleted. — Filed via QA bot`;\nreturn [{ json: { body: { type: 'doc', version: 1, content: [para(message)] } } }];\n"
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000017",
+      "name": "Add the comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3200,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/issue/{{ $('Undo').first().json.jira_key }}/comment",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ body: $json.body }) }}"
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000018",
+      "name": "Commented?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const res = $input.first().json;\nif (![200, 201, 204].includes(res.statusCode)) throw new Error(`Jira refused the undo step for ${$('Undo').first().json.jira_key} (${res.statusCode}): ${JSON.stringify(res.body ?? {}).slice(0, 200)}`);\nreturn [{ json: { ok: true } }];\n"
+      }
+    },
+    {
+      "id": "c2b2c3d4-0001-4000-8000-000000000019",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// What was reversed, in words for the S6 reply.\nconst u = $('Undo').first().json;\nconst t = $('Pick transition').isExecuted ? $('Pick transition').first().json : {};\nconst pr = $('Find the PR').isExecuted ? $('Find the PR').first().json : {};\nlet what;\nif (u.action === 'approve') what = `The questions on ${u.jira_key} were marked withdrawn in a comment`;\nelse {\n  what = `${u.jira_key} marked as undone in Jira${t.transition_name ? ` (moved to ${t.transition_name})` : ''}`;\n  if (u.action === 'flaky') what += pr.pr ? `, and its quarantine PR was labelled undo-requested` : '';\n}\nreturn [{ json: { what } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Undo": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "A ticket to close?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A ticket to close?": {
+      "main": [
+        [
+          {
+            "node": "Transitions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Undo comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transitions": {
+      "main": [
+        [
+          {
+            "node": "Pick transition",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick transition": {
+      "main": [
+        [
+          {
+            "node": "Can close?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Can close?": {
+      "main": [
+        [
+          {
+            "node": "Close",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label undone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Close": {
+      "main": [
+        [
+          {
+            "node": "Closed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Closed?": {
+      "main": [
+        [
+          {
+            "node": "Label undone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label undone": {
+      "main": [
+        [
+          {
+            "node": "Labelled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Labelled?": {
+      "main": [
+        [
+          {
+            "node": "A quarantine?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "A quarantine?": {
+      "main": [
+        [
+          {
+            "node": "Quarantine PR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Undo comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quarantine PR": {
+      "main": [
+        [
+          {
+            "node": "Find the PR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find the PR": {
+      "main": [
+        [
+          {
+            "node": "PR open?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PR open?": {
+      "main": [
+        [
+          {
+            "node": "Label the PR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Undo comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label the PR": {
+      "main": [
+        [
+          {
+            "node": "Undo comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo comment": {
+      "main": [
+        [
+          {
+            "node": "Add the comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add the comment": {
+      "main": [
+        [
+          {
+            "node": "Commented?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commented?": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

@@ -662,6 +662,33 @@ W3b then records the decision, puts the **quarantine request on the waiting list
 - Database: the queue queries (queued once, due, started) were run on the real database, and the test row was deleted.
 - **Nothing was written to Jira.**
 
+### W3b part 4: ↩️ Undo within 24 hours (Story 6.8)
+
+A QA member reacts ↩️ on a message whose decision is handled. **Nothing is ever deleted** in Jira, GitHub or the audit table.
+
+| Undone | What W3b does |
+|---|---|
+| 🐞 bug | "Reaction: undo" (`n8n/workflows/reaction-undo.json`) moves the bug to the first available of Won't Do, Cancelled, Canceled, Closed or Done (setting `close_names`), adds the label `qa-bot-undone`, and comments "Undone by <name> via Slack within 24 hours of filing. Nothing was deleted." |
+| 🔁 flaky | the same for the owner ticket; an open quarantine PR gets the label `undo-requested` (through `qa-relay`, `issues: write`); a request still on the waiting list is cancelled. A 🔁 that created nothing is just marked reversed |
+| ✅ questions | a follow-up comment "These clarification questions were withdrawn by <name> via Slack. Please ignore them." |
+| 🌩️ / 🙈 | the decision is marked reversed |
+
+Undos that change Jira go through the gate (`jira-write`). While AI work is off, or if Jira fails, nothing changes; the undo is retried while the 24 hours last, and a Jira failure goes to W0. W3b then marks the decision undone (`undone_at`, `undone_by`), replies S6 "Undone by @member. <what was reversed>. Nothing was deleted. You can now react again on the message above." and writes an audit entry (`undo-<action>`, the member's email). The message is then open for one new valid reaction.
+
+**More than 24 hours after the action:** nothing changes, and W3b replies once: "Undo is closed for this message (more than 24 hours). Ask the QA lead to change <PM-… in Jira, or the decision> by hand."
+
+**Ignored:** a message with no handled decision, a ↩️ from outside the QA group, and a repeated ↩️.
+
+**Two limits that come from Slack** (it doesn't say when a reaction was added, and old reactions stay on the message):
+- after an undo, **the same person's same reaction doesn't count again** on that message (it's "used up"): react with a different emoji, or another QA member reacts;
+- **each person's ↩️ undoes once per message.** Removing and re-adding the same emoji looks the same to Slack.
+
+**Checked on 5 Oct 2026:**
+- Unit tests: used-up reactions, the 24-hour window, the QA group, a used ↩️, the gate wait, which undos go to Jira, the S6 replies (undone and too late), the transition choice, the comments, and that the undo sub-workflow has no delete call.
+- A new test parses every Code node in every n8n workflow. It caught a name declared twice in the undo comment, which would have failed every Jira undo, now fixed.
+- Database: the undo queries (undo once, a second refused, a new decision allowed afterwards, "too late" noted once, the load listing the used reaction) were run on the real database, and the test rows were deleted.
+- Nothing was written to Jira or GitHub.
+
 ## Ready-for-QA notice (Story 5.7)
 
 The n8n workflow "Ready-for-QA notice" (`n8n/workflows/ready-for-qa-notice.json`) is the early n8n demo: Jira, GitHub and Slack working together. It only reads Jira and GitHub; it never writes to Jira or starts a GitHub workflow.
