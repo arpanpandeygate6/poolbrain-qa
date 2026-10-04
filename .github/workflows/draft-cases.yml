@@ -11,6 +11,8 @@
 # "agent-not-set-up" before any model call. It runs only from `main`.
 
 name: draft-cases
+# W1 finds the run it started by this title.
+run-name: draft-cases ${{ inputs.ticket }}
 
 on:
   workflow_dispatch:

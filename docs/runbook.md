@@ -412,6 +412,28 @@ If Slack refuses or can't be reached, the run fails and W0 alerts; run it again 
 
 **Checked on 4 Oct 2026:** a live run took the week 21–27 Sep, which was empty because the audit log started on 1 Oct, and previewed a header-only `audit-2026-09-27.csv` with the "no entries" line, then wrote its audit entry. W7's CSV code was also run on the 134 real entries of 28 Sep–4 Oct (9 different actors), and the file passed the contract check.
 
+## W1 Ticket watcher (Story 5.5)
+
+"W1 Ticket watcher" (`n8n/workflows/w1-ticket-watcher.json`) turns Jira moves into agent runs. Every 5 minutes:
+1. **Checks its masking patterns.** It holds a copy of `scripts/masking-patterns.json` pinned by its SHA-256, and re-hashes the copy on every run. If they don't match, it starts nothing and W0 alerts. `ci` (`scripts/check_masking_hash.py`) fails a PR that changes the patterns without regenerating W1's copy.
+2. **Finds tickets** in PM that moved, since its last fully successful poll (plus 10 minutes), to:
+   - **"In Progress"**, which starts `draft-cases`. This board has no "Ready for Dev" status, so **the QA lead confirms or changes this** in W1's Settings node (`draft_status`);
+   - **"Ready to Test"**, which starts `generate-tests`.
+   Other statuses and projects are ignored. Its first run starts from that moment.
+3. **Skips** any ticket that already has a record for that workflow (`audit.w1_requests`, one per ticket and workflow) or is already on the waiting list, so nothing is started twice.
+4. **Reads only the description and the "Acceptance Criteria" field** (`customfield_11600`), turns them into plain text, masks them with the pinned patterns, and cuts them at 15,000 characters.
+5. **Asks "Gate: check"** for each request. The waiting list (`audit.deferred_requests`) goes first, oldest first, then new tickets. If allowed, it starts the workflow on `main` with the ticket key and the masked text, records it as `dispatched`, takes it off the waiting list and writes an audit entry (`dispatch-draft-cases` or `dispatch-generate-tests`). If not, the gate keeps it on the waiting list and W1 records it as `deferred`.
+6. Saves its checkpoint only when everything above succeeded.
+
+**W1 is installed but switched off.** While AI work is off, every ticket it sees would join the waiting list, and turning AI on would then start all of them, held back only by the daily limits. Switch it on when AI work should begin: `cd n8n && docker compose run --rm --no-deps -T n8n publish:workflow --id=w1TicketWatch001 && docker compose restart n8n`. Its first run then starts from that moment.
+
+**Still to build (next part of Story 5.5):** finding the run and PR each start produced; the Slack notices "Test cases drafted" (S7), "Tests generated" (S9) and "Action needed" (S10); retrying `blocked` runs once the cases are merged; re-queueing `capped` runs; marking records `done`; and switching off the Ready-for-QA notice so a ticket doesn't get two messages.
+
+**Checked on 4 Oct 2026:**
+- A manual W1 run read Jira (no tickets had moved in the last 10 minutes) and passed its masking-pin check. n8n's own hash of the copy matched the pin (`0521d2bb…`).
+- A temporary copy with the gate replaced by "allowed" started `draft-cases` in GitHub for the made-up ticket `PM-0`. That run's shared first step stopped it as `disabled` (AI work off, no model call) and saved a `run-outcome` artifact with `ticket_key: PM-0`, which n8n read back. That is the full chain n8n → GitHub → first step → run-outcome, working.
+- The temporary workflows, the `PM-0` record and W1's checkpoint were removed afterwards. The audit entry for that start remains.
+
 ## Ready-for-QA notice (Story 5.7)
 
 The n8n workflow "Ready-for-QA notice" (`n8n/workflows/ready-for-qa-notice.json`) is the early n8n demo: Jira, GitHub and Slack working together. It only reads Jira and GitHub; it never writes to Jira or starts a GitHub workflow.

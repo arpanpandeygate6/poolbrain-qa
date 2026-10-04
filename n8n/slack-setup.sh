@@ -62,6 +62,10 @@ install workflows/audit-record-github-runs.json runRecorder00001
 install workflows/ready-for-qa-notice.json readyNotice00001
 install workflows/w4-daily-update.json w4DailyUpdate001
 install_with_channel workflows/w7-weekly-audit.json w7WeeklyAudit001
+# W1 is installed but not switched on: switch it on only when AI work should
+# start (docs/runbook.md, "W1 Ticket watcher"). Re-importing switches it off.
+docker compose exec -T n8n sh -c 'cat > /tmp/w.json && n8n import:workflow --input=/tmp/w.json; s=$?; rm -f /tmp/w.json; exit $s' \
+  < workflows/w1-ticket-watcher.json 2>&1 | tail -1
 
 docker compose restart n8n >/dev/null 2>&1
 if [ -n "$SLACK_CHANNEL" ]; then
