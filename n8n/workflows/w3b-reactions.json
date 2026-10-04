@@ -182,7 +182,7 @@
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- Mapped messages up to 7 days old, each with its live (not undone) decision.\nSELECT coalesce(json_agg(json_build_object(\n         'map_id', m.id, 'channel', m.channel, 'ts', m.ts, 'kind', m.kind, 'test_id', m.test_id, 'ticket', m.ticket,\n         'nightly_run_id', m.nightly_run_id::text, 'class', m.class, 'thread_ts', m.thread_ts,\n         'source_run_id', m.source_run_id::text,\n         'decision', CASE WHEN d.id IS NULL THEN NULL ELSE json_build_object(\n           'id', d.id, 'action', d.action, 'state', d.state, 'actor_id', d.actor_id, 'actor_email', d.actor_email,\n           'actor_name', d.actor_name, 'prompt_ts', d.prompt_ts) END) ORDER BY m.id), '[]') AS messages\nFROM audit.message_map m\nLEFT JOIN audit.reaction_decisions d ON d.map_id = m.id AND d.undone_at IS NULL\nWHERE m.created_at > now() - interval '7 days';",
+        "query": "-- Mapped messages up to 7 days old, each with its live (not undone) decision.\nSELECT coalesce(json_agg(json_build_object(\n         'map_id', m.id, 'channel', m.channel, 'ts', m.ts, 'kind', m.kind, 'test_id', m.test_id, 'ticket', m.ticket,\n         'nightly_run_id', m.nightly_run_id::text, 'class', m.class, 'thread_ts', m.thread_ts,\n         'source_run_id', m.source_run_id::text, 'flow_id', m.flow_id, 'bug_title', m.bug_title,\n         'jira_wait_until', (SELECT to_char(q.not_before AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM audit.deferred_requests q\n                             WHERE q.action = 'jira-write' AND q.target = 'reaction-' || m.id AND q.done_at IS NULL LIMIT 1),\n         'decision', CASE WHEN d.id IS NULL THEN NULL ELSE json_build_object(\n           'id', d.id, 'action', d.action, 'state', d.state, 'actor_id', d.actor_id, 'actor_email', d.actor_email,\n           'actor_name', d.actor_name, 'prompt_ts', d.prompt_ts) END) ORDER BY m.id), '[]') AS messages\nFROM audit.message_map m\nLEFT JOIN audit.reaction_decisions d ON d.map_id = m.id AND d.undone_at IS NULL\nWHERE m.created_at > now() - interval '7 days';",
         "options": {}
       },
       "credentials": {
@@ -677,7 +677,20 @@
         -100
       ],
       "parameters": {
-        "jsCode": "// Who reacted, and what happens. This part handles 🌩️ Environment and 🙈\n// Ignore; 🐞 Bug, 🔁 Flaky and ✅ Approve are added with Jira (Stories 6.4,\n// 6.6, 6.7) and stay unhandled until then.\nconst found = $('First valid reaction').all();\nreturn $input.all().flatMap((user, i) => {\n  const m = found[i].json;\n  if (!['environment', 'ignore'].includes(m.action)) return [];\n  const profile = user.json.user?.profile ?? {};\n  const email = profile.email || `${m.actor_id}@slack.invalid`;\n  const name = profile.display_name || profile.real_name || user.json.user?.name || m.actor_id;\n  return [{ json: { ...m, actor_email: email, actor_name: name,\n    state: m.action === 'ignore' ? 'waiting-for-reason' : 'handled' } }];\n});\n"
+        "jsCode": "// Who reacted (email and name from their Slack profile).\nconst found = $('First valid reaction').all();\nreturn $input.all().flatMap((user, i) => {\n  const m = found[i].json;\n  const profile = user.json.user?.profile ?? {};\n  const email = profile.email || `${m.actor_id}@slack.invalid`;\n  const name = profile.display_name || profile.real_name || user.json.user?.name || m.actor_id;\n  return [{ json: { ...m, actor_email: email, actor_name: name,\n    state: m.action === 'ignore' ? 'waiting-for-reason' : 'handled' } }];\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000031",
+      "name": "Slack-only decisions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        -250
+      ],
+      "parameters": {
+        "jsCode": "// 🌩️ Environment and 🙈 Ignore: decisions recorded in Slack only.\nreturn $input.all().filter((d) => ['environment', 'ignore'].includes(d.json.action));\n"
       }
     },
     {
@@ -686,14 +699,14 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2600,
-        -100
+        2800,
+        -250
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- One live decision per message; a second reaction can't add another. Always\n-- one row back (the new id, or null), so rows stay in line with decisions.\nWITH saved AS (\n  INSERT INTO audit.reaction_decisions (map_id, action, state, actor_id, actor_email, actor_name, handled_at)\n  VALUES ($1::bigint, $2, $3, $4, $5, $6, CASE WHEN $3 = 'handled' THEN now() END)\n  ON CONFLICT (map_id) WHERE undone_at IS NULL DO NOTHING\n  RETURNING id\n)\nSELECT (SELECT id FROM saved) AS id;",
+        "query": "-- One live decision per message; a second reaction can't add another. Always\n-- one row back (the new id, or null), so rows stay in line with decisions.\nWITH saved AS (\n  INSERT INTO audit.reaction_decisions (map_id, action, state, actor_id, actor_email, actor_name, jira_key, link, handled_at)\n  VALUES ($1::bigint, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $3 = 'handled' THEN now() END)\n  ON CONFLICT (map_id) WHERE undone_at IS NULL DO NOTHING\n  RETURNING id\n)\nSELECT (SELECT id FROM saved) AS id;",
         "options": {
-          "queryReplacement": "={{ [$json.map_id, $json.action, $json.state, $json.actor_id, $json.actor_email, $json.actor_name] }}"
+          "queryReplacement": "={{ [$json.map_id, $json.action, $json.state, $json.actor_id, $json.actor_email, $json.actor_name, '', ''] }}"
         }
       },
       "credentials": {
@@ -701,8 +714,7 @@
           "id": "auditPostgres001",
           "name": "Audit log (Postgres)"
         }
-      },
-      "alwaysOutputData": true
+      }
     },
     {
       "id": "e3b2c3d4-0001-4000-8000-000000000024",
@@ -710,11 +722,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2800,
-        -100
+        3000,
+        -250
       ],
       "parameters": {
-        "jsCode": "// S4 (Environment) and S5 (Ignore reason prompt), in the message's thread.\n// Only decisions just recorded get a reply (none twice).\nconst decisions = $('Decisions').all();\nreturn $input.all().flatMap((row, i) => {\n  if (!row.json.id) return [];\n  const d = decisions[i].json;\n  const base = { decision_id: row.json.id, kind: '', todo: '', todo_label: '', links: [], thread_ts: d.thread_ts || d.ts, action: d.action };\n  if (d.action === 'environment') {\n    return [{ json: { ...base, header: `Marked Environment by ${d.actor_name}`,\n      body: `<@${d.actor_id}> marked this failure 🌩️ Environment. The gate is unchanged. This will show in the daily update.`,\n      legend: '↩️ within 24 h to undo' } }];\n  }\n  return [{ json: { ...base, header: 'A reason is needed for 🙈 Ignore',\n    body: `<@${d.actor_id}>, to record 🙈 Ignore, reply in this thread with a short reason. Nothing is recorded until then.`, legend: '' } }];\n});\n"
+        "jsCode": "// S4 (Environment) and S5 (Ignore reason prompt), in the message's thread.\n// Only decisions just recorded get a reply (none twice).\nconst decisions = $('Slack-only decisions').all();\nreturn $input.all().flatMap((row, i) => {\n  if (!row.json.id) return [];\n  const d = decisions[i].json;\n  const base = { decision_id: row.json.id, kind: '', todo: '', todo_label: '', links: [], thread_ts: d.thread_ts || d.ts, action: d.action };\n  if (d.action === 'environment') {\n    return [{ json: { ...base, header: `Marked Environment by ${d.actor_name}`,\n      body: `<@${d.actor_id}> marked this failure 🌩️ Environment. The gate is unchanged. This will show in the daily update.`,\n      legend: '↩️ within 24 h to undo' } }];\n  }\n  return [{ json: { ...base, header: 'A reason is needed for 🙈 Ignore',\n    body: `<@${d.actor_id}>, to record 🙈 Ignore, reply in this thread with a short reason. Nothing is recorded until then.`, legend: '' } }];\n});\n"
       }
     },
     {
@@ -723,8 +735,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        3000,
-        -100
+        3200,
+        -250
       ],
       "parameters": {
         "workflowId": {
@@ -842,8 +854,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3200,
-        -100
+        3400,
+        -250
       ],
       "parameters": {
         "jsCode": "// Slack didn't take a reply: fail (W0 alerts). Otherwise remember the prompt's\n// ts for 🙈, so the reason reply can be found.\nconst replies = $('Replies').all();\nconst posts = $input.all();\nconst failed = posts.filter((p) => !p.json.posted && !p.json.preview);\nif (failed.length) throw new Error(`reaction reply not posted: ${failed[0].json.error}`);\nreturn posts.map((p, i) => ({ json: { decision_id: replies[i].json.decision_id, action: replies[i].json.action, prompt_ts: p.json.ts ?? '' } }));\n"
@@ -855,8 +867,8 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        3400,
-        -100
+        3600,
+        -250
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -878,11 +890,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3600,
-        -100
+        3800,
+        -250
       ],
       "parameters": {
-        "jsCode": "// Audit with the member's email as the actor (FR-26).\nreturn $('Decisions').all().filter((d) => d.json.action === 'environment').map((d) => ({ json: {\n  actor: d.json.actor_email, actor_type: 'human', action: 'decision-environment',\n  target: d.json.test_id || d.json.ticket, link: d.json.nightly_run_id ? `https://github.com/${$('Settings').first().json.repo}/actions/runs/${d.json.nightly_run_id}` : '' } }));\n"
+        "jsCode": "// Audit with the member's email as the actor (FR-26).\nreturn $('Slack-only decisions').all().filter((d) => d.json.action === 'environment').map((d) => ({ json: {\n  actor: d.json.actor_email, actor_type: 'human', action: 'decision-environment',\n  target: d.json.test_id || d.json.ticket, link: d.json.nightly_run_id ? `https://github.com/${$('Settings').first().json.repo}/actions/runs/${d.json.nightly_run_id}` : '' } }));\n"
       },
       "executeOnce": true
     },
@@ -892,8 +904,652 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
+        4000,
+        -250
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000032",
+      "name": "Jira decisions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        50
+      ],
+      "parameters": {
+        "jsCode": "// 🐞 Bug and ✅ Approve write to Jira: through the gate (a Jira write, AR-11).\n// A reaction the gate held back is asked about again after its wait.\nconst now = Date.now();\nreturn $input.all()\n  .filter((d) => ['bug', 'approve'].includes(d.json.action))\n  .filter((d) => !d.json.jira_wait_until || Date.parse(d.json.jira_wait_until) <= now)\n  .map((d) => ({ json: { ...d.json, action_kind: d.json.action,\n    gate: { action: 'jira-write', workflow: '', target: `reaction-${d.json.map_id}`, payload: { map_id: d.json.map_id, reaction: d.json.action } } } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000033",
+      "name": "To the gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        50
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().map((d) => ({ json: d.json.gate }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000034",
+      "name": "Gate",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3000,
+        50
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "gateCheck0000001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "={{ $json.action }}",
+            "workflow": "={{ $json.workflow }}",
+            "target": "={{ $json.target }}",
+            "payload": "={{ $json.payload }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "payload",
+              "displayName": "payload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000035",
+      "name": "Allowed Jira actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        50
+      ],
+      "parameters": {
+        "jsCode": "const decisions = $('Jira decisions').all();\nreturn $input.all().flatMap((answer, i) => (answer.json.allowed === true ? [decisions[i]] : []));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000036",
+      "name": "Bugs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        -50
+      ],
+      "parameters": {
+        "jsCode": "const repo = $('Settings').first().json.repo;\nreturn $input.all().filter((d) => d.json.action === 'bug').map((d) => ({ json: { ...d.json, repo } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000037",
+      "name": "File bug",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3600,
+        -50
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "rxFileBug0000001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "test_id": "={{ $json.test_id }}",
+            "flow_id": "={{ $json.flow_id }}",
+            "bug_title": "={{ $json.bug_title }}",
+            "nightly_run_id": "={{ $json.nightly_run_id }}",
+            "channel": "={{ $json.channel }}",
+            "ts": "={{ $json.ts }}",
+            "actor_email": "={{ $json.actor_email }}",
+            "actor_name": "={{ $json.actor_name }}",
+            "repo": "={{ $json.repo }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "test_id",
+              "displayName": "test_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "flow_id",
+              "displayName": "flow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "bug_title",
+              "displayName": "bug_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "nightly_run_id",
+              "displayName": "nightly_run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ts",
+              "displayName": "ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_email",
+              "displayName": "actor_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_name",
+              "displayName": "actor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "repo",
+              "displayName": "repo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000038",
+      "name": "Approvals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const repo = $('Settings').first().json.repo;\nreturn $input.all().filter((d) => d.json.action === 'approve').map((d) => ({ json: { ...d.json, repo } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000039",
+      "name": "Send questions",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3600,
+        100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "rxSendQuestions1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ticket": "={{ $json.ticket }}",
+            "source_run_id": "={{ $json.source_run_id }}",
+            "channel": "={{ $json.channel }}",
+            "ts": "={{ $json.ts }}",
+            "actor_email": "={{ $json.actor_email }}",
+            "actor_name": "={{ $json.actor_name }}",
+            "repo": "={{ $json.repo }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ticket",
+              "displayName": "ticket",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "source_run_id",
+              "displayName": "source_run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "channel",
+              "displayName": "channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "ts",
+              "displayName": "ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_email",
+              "displayName": "actor_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_name",
+              "displayName": "actor_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "repo",
+              "displayName": "repo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000040",
+      "name": "Jira results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        250
+      ],
+      "parameters": {
+        "jsCode": "// Each Jira action with its result, in order: bugs, then approvals.\nconst pair = (from, results) => ($(from).isExecuted ? $(from).all().map((d, i) => ({ ...d.json, ...$(results).all()[i].json })) : []);\nreturn [...pair('Bugs', 'File bug'), ...pair('Approvals', 'Send questions')].map((d) => ({ json: d }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000041",
+      "name": "Record Jira decision",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3600,
+        250
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- One live decision per message; a second reaction can't add another. Always\n-- one row back (the new id, or null), so rows stay in line with decisions.\nWITH saved AS (\n  INSERT INTO audit.reaction_decisions (map_id, action, state, actor_id, actor_email, actor_name, jira_key, link, handled_at)\n  VALUES ($1::bigint, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $3 = 'handled' THEN now() END)\n  ON CONFLICT (map_id) WHERE undone_at IS NULL DO NOTHING\n  RETURNING id\n)\nSELECT (SELECT id FROM saved) AS id;",
+        "options": {
+          "queryReplacement": "={{ [$json.map_id, $json.action, 'handled', $json.actor_id, $json.actor_email, $json.actor_name, $json.jira_key, $json.url] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000042",
+      "name": "Jira replies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
         3800,
-        -100
+        250
+      ],
+      "parameters": {
+        "jsCode": "// S4 after a Jira action (EXPERIENCE.md M4), only for decisions just recorded.\nconst BOT = 'Filed via QA bot';  // contracts/vocabulary.json bot_label.jira\nconst done = $('Jira results').all();\nreturn $input.all().flatMap((row, i) => {\n  if (!row.json.id) return [];\n  const d = done[i].json;\n  const who = `<@${d.actor_id}>`;\n  const base = { decision_id: row.json.id, action: d.action, kind: '', todo: '', todo_label: '', thread_ts: d.thread_ts || d.ts,\n    links: [{ label: `Jira ${d.jira_key}`, url: d.url }], legend: '↩️ within 24 h to undo' };\n  if (d.action === 'bug') {\n    return [{ json: { ...base, header: `Bug ${d.jira_key} filed by ${d.actor_name}`, body: d.reporter_ok\n      ? `Bug ${d.jira_key} filed by ${who}. Labelled \"${BOT}\".`\n      : `Bug ${d.jira_key} filed by ${who}. Jira didn't accept you as Reporter, so a \"Filed by ${d.actor_name}\" comment was added.` } }];\n  }\n  return [{ json: { ...base, header: `Questions added to ${d.jira_key}`, body: `Questions added to ${d.jira_key} as a comment naming ${who}.` } }];\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000043",
+      "name": "Post Jira reply",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4000,
+        250
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "todo_label": "={{ $json.todo_label }}",
+            "links": "={{ $json.links }}",
+            "legend": "={{ $json.legend }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "legend",
+              "displayName": "legend",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000044",
+      "name": "Jira audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4200,
+        250
+      ],
+      "parameters": {
+        "jsCode": "const failed = $input.all().filter((p) => !p.json.posted && !p.json.preview);\nif (failed.length) throw new Error(`Jira confirmation not posted: ${failed[0].json.error}`);\nreturn $('Jira results').all().map((d) => ({ json: {\n  actor: d.json.actor_email, actor_type: 'human', action: d.json.action === 'bug' ? 'decision-bug' : 'decision-approve',\n  target: d.json.action === 'bug' ? `${d.json.jira_key} for ${d.json.test_id}` : `${d.json.jira_key} questions`, link: d.json.url } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000045",
+      "name": "Write Jira audit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4400,
+        250
       ],
       "parameters": {
         "workflowId": {
@@ -978,7 +1634,7 @@
       "typeVersion": 2.6,
       "position": [
         1600,
-        200
+        600
       ],
       "parameters": {
         "operation": "executeQuery",
@@ -1231,7 +1887,154 @@
       "main": [
         [
           {
+            "node": "Slack-only decisions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Jira decisions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack-only decisions": {
+      "main": [
+        [
+          {
             "node": "Record decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira decisions": {
+      "main": [
+        [
+          {
+            "node": "To the gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To the gate": {
+      "main": [
+        [
+          {
+            "node": "Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate": {
+      "main": [
+        [
+          {
+            "node": "Allowed Jira actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed Jira actions": {
+      "main": [
+        [
+          {
+            "node": "Bugs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Approvals",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Jira results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bugs": {
+      "main": [
+        [
+          {
+            "node": "File bug",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approvals": {
+      "main": [
+        [
+          {
+            "node": "Send questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira results": {
+      "main": [
+        [
+          {
+            "node": "Record Jira decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Jira decision": {
+      "main": [
+        [
+          {
+            "node": "Jira replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira replies": {
+      "main": [
+        [
+          {
+            "node": "Post Jira reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post Jira reply": {
+      "main": [
+        [
+          {
+            "node": "Jira audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira audit": {
+      "main": [
+        [
+          {
+            "node": "Write Jira audit",
             "type": "main",
             "index": 0
           }

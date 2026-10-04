@@ -603,13 +603,45 @@ Everything else is ignored with no reply: other emoji, people outside the group,
 **Decisions** (`audit.reaction_decisions`, at most one live decision per message; never deleted):
 - **🌩️ Environment:** recorded, with a thread reply: "<@member> marked this failure 🌩️ Environment. The gate is unchanged. This will show in the daily update." and "↩️ within 24 h to undo". Nothing goes to Jira. Audit entry with the member's email as actor.
 - **🙈 Ignore:** W3b asks once in the thread: "<@member>, to record 🙈 Ignore, reply in this thread with a short reason. Nothing is recorded until then." When that member's reply arrives, the reason is recorded and confirmed ('… Reason: "…". The gate is unchanged.'), with an audit entry.
-- **🐞 Bug, 🔁 Flaky, ✅ Approve** write to Jira. They come in the next part, and until then they stay unhandled (no reply).
+- **🐞 Bug and ✅ Approve** write to Jira (part 2, below). **🔁 Flaky** comes next, and until then it stays unhandled (no reply).
 
 W3b needs the Slack app's `reactions:read`, `channels:history` (`groups:history` for a private channel), `usergroups:read`, `users:read` and `users:read.email` scopes, which are all in the manifest. A member whose email can't be read is recorded as `<member ID>@slack.invalid`. W3b is installed but **switched off** with W1.
 
 **Checked on 5 Oct 2026:**
 - Unit tests: the emoji names match the vocabulary; ten cases for the first valid reaction (wrong emoji, outsider, wrong message kind, skin tones, ↩️, nothing); the QA group from a user group or a list; the replies; and the 🙈 reason (only that member's reply after the prompt counts).
 - Live, without Slack: W3b stopped at "Slack set up?". Its lock (a second lock refused), the load query, the release, and recording a decision (a second reaction refused; a reason recorded once) were run against the real database. The test rows were deleted.
+
+### W3b part 2: 🐞 Bug and ✅ Approve (Stories 6.4 and 6.7)
+
+Both are **Jira writes**, so they go through the gate (`jira-write`). While AI work is off nothing is written, the reaction stays unhandled, and it is asked about again after 15 minutes. 🌩️ and 🙈 run first, so a Jira problem can't hold them up.
+
+**🐞 Bug** calls the sub-workflow "Reaction: file bug" (`n8n/workflows/reaction-file-bug.json`). It:
+1. finds the member's Jira account: first in its **`account_map`** setting, then by email search;
+2. creates a **Bug** in PM:
+   - the summary is the drafted bug title, or "Nightly failure: <test>" when unclassified;
+   - the label is `filed-via-qa-bot`, because Jira labels can't contain spaces;
+   - the description opens with "Filed via QA bot, by <name> from Slack.", then gives the run date, the test, the flow, and links (Nightly run · Allure report · Slack thread). It never includes error text or other raw evidence;
+   - **Reporter = the member**;
+3. if Jira refuses the Reporter (the ai.team account lacks "Modify Reporter"), creates the bug without it;
+4. reads the bug back. If the member isn't the Reporter, it adds the S20 comment "Filed by <name> (<email>) via Slack. Jira didn't accept them as Reporter. Filed via QA bot.";
+5. any other Jira error fails the run (W0 alerts), and the reaction stays unhandled for a later run.
+
+**✅ Approve** (on a `questions` message) calls "Reaction: send questions" (`n8n/workflows/reaction-send-questions.json`). It reads the `draft-cases` run's `questions` file and `run-outcome`, then adds the S19 comment to the ticket: "Clarification questions from QA, approved by <name> — Filed via QA bot", the numbered questions, and links to PR 1 and the Slack thread.
+
+After either, W3b **records the decision straight away** (with the Jira key and link), before replying, so a failed reply can never file a second bug. Then it replies in the thread:
+- 'Bug PM-… filed by @member. Labelled "Filed via QA bot".', or the Reporter-fallback wording;
+- or "Questions added to PM-… as a comment naming @member.";
+
+with "↩️ within 24 h to undo", and an audit entry with the member's email.
+
+**Before 🐞 is used:**
+- Ask the Jira admin for **"Modify Reporter"** in PM for the ai.team account.
+- **Fill in `account_map`**, in the "Settings" node of "Reaction: file bug": `{"member@gate6.com": "<Jira accountId>"}` for each QA member, with emails in lower case. A Jira accountId is the last part of the URL of that person's Jira profile. The read-only check on 5 Oct 2026 found that **Jira's email search returned nobody**, not even the ai.team account, because Jira hides most emails. Without this list, every bug takes the "Filed by" comment fallback.
+
+**Checked on 5 Oct 2026:**
+- Unit tests: the bug fields (no raw evidence, Reporter set, the links), Reporter from the list, the three creation outcomes (created; Reporter refused; other error), the read-back check, the S20 comment, the questions comment, the gate wait, and the replies.
+- Read-only Jira checks: PM has the issue types Story, Task, **Bug**, Epic and Subtask, and the email search answers but finds nobody.
+- **Nothing was written to Jira:** these paths are first used for real after Slack and the Story 4.4 setup, on a staged failure (B9 exit check).
 
 ## Ready-for-QA notice (Story 5.7)
 
