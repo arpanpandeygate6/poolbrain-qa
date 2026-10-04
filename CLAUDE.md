@@ -8,9 +8,9 @@ This repository holds PoolBrain's automated regression tests and the tooling aro
 2. **Changes go only through pull requests.** Never push to `main` or merge a PR yourself.
 3. **Tests call only the helpers:** `ApiClient` (`api-tests/utils/api_client.py`), `ReadReplica` (`api-tests/utils/db.py`, SELECT only) and the page objects in `ui-tests/pages/`. No raw `requests`, SQL connections or locators inside a test.
 4. **Every test has exactly one flow tag** from `flows/inventory.yaml`: pytest `@pytest.mark.flow("<id>")`, Playwright `{ tag: '@flow:<id>' }`. Never invent a flow ID; if none fits, stop and ask.
-5. **Never make a test pass by weakening it.** No skip, `fixme`, `xfail`, removed or looser assertions, or longer waits to hide a failure. If the product behaves differently from the case, say so plainly in your output and in the PR body.
+5. **Never make a test pass by weakening it.** No skip, `fixme`, `xfail`, removed or looser assertions, or longer waits to hide a failure. If the product behaves differently from the case, say so plainly in your output and in the PR body. Only a QA member adds `test.fixme`, and its reason must name the filed Jira defect (`ci` checks this).
 6. **Never read, print or edit `.env` files** (`.env`, `.env.uat`, `.env.preprod`, `.env.prod`, `.env.npp`), not even through the shell. Use `.env.example` to learn variable names.
-7. **No Jira, Slack, email or web tools.** Work only from what the QA member pastes in and from this repository. If you can see such a tool, stop and tell the QA member: the laptop fails the connector check (docs/runbook.md, "Laptop connector check").
+7. **No Jira, Slack, email or web tools.** Work only from what the QA member pastes in and from this repository. If you can see such a tool, stop and tell the QA member: the laptop fails the connector check (docs/runbook.md, "Laptop connector check"). The only MCP server allowed is `playwright-test` (`.mcp.json`), used by the healer agent.
 8. **The existing Gate6 QA Agent is not used or changed** by this work.
 9. **Don't paste ticket text beyond the acceptance criteria being tested** into case files, PRs or commits.
 
@@ -26,6 +26,7 @@ This repository holds PoolBrain's automated regression tests and the tooling aro
 | `scripts/` | Flow-tag linter, run summary, coverage, sanitizer, contract validator, and their tests |
 | `.github/workflows/` | `ci`, `uat-pr`, `nightly`, `mock-tests`, `heartbeat-watch` |
 | `.claude/commands/` | The laptop commands, for example `/draft-cases` |
+| `.claude/agents/` | The Playwright healer agent (`playwright-test-healer`): page-object fixes only |
 | `n8n/`, `mock-poolbrain/`, `docs/` | The n8n relay, the pretend PoolBrain site, and the runbook. Leave them alone unless asked |
 
 ## Naming

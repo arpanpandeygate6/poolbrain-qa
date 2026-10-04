@@ -205,7 +205,7 @@ Nothing else changes: every workflow starts posting. Running `n8n/slack-setup.sh
 
 **What the repository blocks** (`.claude/settings.json`, committed):
 - claude.ai connectors are switched off (`disableClaudeAiConnectors`);
-- every MCP tool (`mcp__*`), web fetch, web search, `curl` and `wget` are denied;
+- web fetch, web search, `curl` and `wget` are denied, and so are claude.ai connector and plugin MCP tools (`mcp__claude_ai_*`, `mcp__plugin_*`, and the design plugin's servers by name). The only MCP server allowed is `playwright-test` from `.mcp.json`, used by the healer (Story 4.7; `enabledMcpjsonServers`);
 - reading or editing `.env`, `.env.uat`, `.env.preprod`, `.env.prod`, `.env.npp` and `.env.local` is denied, including through common shell commands (`cat`, `head`, `grep`, `sed`, `cp`, `base64` and others). Shell denies can't cover every possible command, so the rule in `CLAUDE.md` still matters.
 
 Plugins synced from the organisation's claude.ai account (for example the "design" plugin, which brings Slack, Atlassian, Asana, Figma, Notion and other MCP servers) can still **load** in a session, even though the deny list stops their tools being used. The laptop check below counts a loaded tool as a fail.
@@ -216,7 +216,7 @@ Do this on each QA laptop before it is used for agent work, and again after Clau
 
 1. Log in to Claude Code with the ai.team Claude Max account, and make sure no API key is set (`echo $ANTHROPIC_API_KEY` prints nothing).
 2. Start a **fresh** session in the repository folder.
-3. Type `/mcp`: no server may be listed as connected. Type `/context`: the tools list must show no MCP tools.
+3. Type `/mcp`: the only server allowed is `playwright-test` (approve it the first time it asks). Type `/context`: the only MCP tools allowed are `mcp__playwright-test__…`.
 4. Ask: "read api-tests/.env.uat". It must be refused.
 5. Write the result in the table. **A laptop that fails is not used for agent work** until it is fixed (switch off the plugin for this project with `/plugin`, or ask the claude.ai organisation admin to stop syncing it) and checked again.
 
@@ -300,6 +300,31 @@ Nothing below exists yet. The code above is ready for it.
 **Stopping AI work:** set `AGENT_ENABLED` to `false` (see "Kill switch and daily limits"). **Stopping one run already going:** open it on the Actions tab and click **Cancel workflow**.
 
 **Checked on 4 Oct 2026 (unit tests only, as no agent workflow exists yet):** the counting rule passes every case in the shared fixture. Each way of stopping (switch off or any other value, limit reached with outcomes read from artifacts, broken or missing limits) stops before GitHub or a model is asked, and writes a valid `run-outcome`. The first live run will be the `draft-cases` workflow (Story 4.5).
+
+### Playwright healer on a laptop (Story 4.7)
+
+When a UI test fails in CI because the page changed (a locator, a label, a button's text), a QA member can let the healer propose a fix. **Laptops only, against UAT:** `ci` (`scripts/skip_check.py`) fails any workflow that runs the healer.
+
+**What is committed:**
+- `.claude/agents/playwright-test-healer.md`: made with `npx playwright init-agents --loop=claude -c ui-tests/playwright.config.ts` (Playwright 1.63.0), then adapted to the house rules. It changes **only page objects in `ui-tests/pages/`**; it never changes assertions, expected values, test data or waits; it never adds `test.fixme`, `test.skip` or `test.only`; and when the feature itself is broken it **stops** and says "The feature failed: …". It can edit existing files but not create new ones.
+- `.mcp.json`: the `playwright-test` server, started from the installed Playwright in `ui-tests/node_modules` (the generated file used plain `npx playwright`, which from the repository root would download Playwright).
+
+**Left out on purpose:** the planner and generator agents (tests come from cases through `/generate-api-tests`), and the generated `seed.spec.ts`, a test with no flow tag that the flow-tag check would reject.
+
+**How to use it:**
+1. Make sure the UAT settings are in `ui-tests/.env.uat` (on the prototype, start the pretend PoolBrain: README).
+2. Start Claude Code in the repository folder and approve the `playwright-test` server when asked.
+3. Ask: "Use the playwright-test-healer agent to fix `tests/login.spec.ts`" (or whichever test failed).
+4. If it fixed a locator, check the change is only in `ui-tests/pages/`, then open a PR from a new branch titled "[<KEY>] Fix: <summary>" with `.github/PULL_REQUEST_TEMPLATE/fix.md` (Type: "Locator fix (healer)"). Merge only after `ci` and `uat-pr` are green.
+5. If it says the feature failed, file the defect in Jira. The test and the gate stay red. If the team decides to park the test, a QA member adds `test.fixme` **with the Jira key in its reason**, and uses the Fix template's "`test.fixme` — link the filed defect" type.
+
+**Skips need a defect (`ci`):** a PR that adds `test.fixme`, `test.skip`, `describe.skip`, a pytest skip or an xfail fails `ci` unless the reason, on the same line or the next, contains a Jira key such as `PM-5678`. Skips already on `main` (for example the specs' "account not set" guard) are left alone. The PR still needs QA approval. `ci` now checks out the full history to compare a PR with its base branch.
+
+**Checked on 5 Oct 2026:**
+- The setup was generated on a scratch copy and then adapted.
+- The `playwright-test` server started from the repository root with the installed Playwright and listed its tools.
+- Unit tests cover the skip rule (six kinds of skip, with and without a key, existing skips untouched) and the "no healer in CI" rule. They also check that the healer has no Write or shell tool, keeps its house rules and uses only its own MCP tools, and that only that server is allowed.
+- **Not yet tried:** a real healing session. It needs a fresh Claude Code session (the project settings changed) and a test broken on purpose. The first QA member to try it records the result here.
 
 ### `draft-cases` workflow (Story 4.5)
 

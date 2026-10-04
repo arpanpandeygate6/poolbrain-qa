@@ -25,6 +25,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+          fetch-depth: 0   # the skip check compares the change with the base branch
 
       - uses: actions/setup-python@v6
         with:
@@ -63,6 +64,9 @@ jobs:
 
       - name: Case files
         run: python scripts/case_lint.py
+
+      - name: Skips link a defect; no healer in CI
+        run: python scripts/skip_check.py --base "origin/${GITHUB_BASE_REF:-main}"
 
       - name: Test helper unit tests
         working-directory: api-tests

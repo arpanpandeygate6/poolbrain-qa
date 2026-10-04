@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "playwright-test": {
+      "command": "ui-tests/node_modules/.bin/playwright",
+      "args": ["run-test-mcp-server", "-c", "ui-tests/playwright.config.ts"]
+    }
+  }
+}

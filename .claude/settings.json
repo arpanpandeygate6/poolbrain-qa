@@ -30,7 +30,15 @@
       "Edit(**/.env.preprod)",
       "Edit(**/.env.prod)",
       "Edit(**/.env.npp)",
-      "mcp__*",
+      "mcp__claude_ai_*",
+      "mcp__plugin_*",
+      "mcp__plugin_design_slack",
+      "mcp__plugin_design_atlassian",
+      "mcp__plugin_design_asana",
+      "mcp__plugin_design_figma",
+      "mcp__plugin_design_intercom",
+      "mcp__plugin_design_linear",
+      "mcp__plugin_design_notion",
       "WebSearch",
       "Bash(cat *.env*)",
       "Bash(head *.env*)",
@@ -48,5 +56,9 @@
       "Read(**/.env.local)",
       "Edit(**/.env.local)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "playwright-test"
+  ],
+  "enableAllProjectMcpServers": false
 }
