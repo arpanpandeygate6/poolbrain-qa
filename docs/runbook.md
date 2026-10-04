@@ -345,6 +345,30 @@ On a plan with branch protection, protect `main` and record here that an agent p
 
 **Checked on 4 Oct 2026 (unit tests):** every decision above, using a small Git repository in the tests. The real flow-tag linter, collection and type check were also run on this repository through the check's own code, and passed.
 
+### `triage` workflow (Story 6.2)
+
+**Actions → triage → Run workflow** (on `main`) with a nightly run's ID, the number in its URL. n8n W2 will start it after a failed nightly (Story 6.3). Its run title is `triage <nightly run ID>`. In order, it:
+1. checks the ID is a number (otherwise `error`, `invalid-nightly-run-id`);
+2. runs the shared first step: kill switch, and the `triage` daily limit (2 in `AGENT_CAPS`);
+3. checks the Claude token is set up. Triage opens no PR, so it needs no `qa-agent` app;
+4. downloads **only** that nightly run's `triage-input`, the masked text from Story 6.1, and checks its contract; an unknown `schema_version` or a file for another run is rejected. A run with no `triage-input` ends `blocked`, `no-triage-input`, which doesn't count toward the limit;
+5. runs the agent with **only the Read and Write tools** (no shell, edit, web or Jira/Slack tools). For each failure it chooses product defect (with a drafted bug title), test defect, environment, flaky or unknown, plus a one-line reason;
+6. checks the result (`scripts/agent_triage.py check`):
+   - **flaky without evidence becomes unknown**, with the reason starting "Downgraded from flaky": the evidence must be a pass on retry tonight, or a failure or retry pass in the last 7 nights;
+   - every input test must appear exactly once;
+   - a bug title is required for product defects and only allowed there;
+   - `contracts/triage.schema.json` must pass, and no repository file may have changed;
+   anything else ends `error`, `invalid-triage`, and nothing is saved;
+7. saves `triage.json` as the artifact `triage` (30 days), and always `run-outcome`. A model or token failure ends `error`, `agent-failed`.
+
+Triage only suggests: it never changes a test result, the gate or a file. People decide by reacting in Slack (Stories 6.4–6.6).
+
+**Try it now, before the setup exists:** run it with any nightly run ID. With `AGENT_ENABLED` not created, it should end at step 2 with "Result: Not run (agent is turned off)".
+
+**The B6 exit check** (people, after the Story 4.4 setup): make a nightly fail on purpose, run triage on it by hand, and check that `triage.json` makes sense.
+
+**Checked on 4 Oct 2026 (unit tests):** the ID check; the token-only setup check; the download of only `triage-input` (and its contract and run-ID checks); the flaky rule in six history cases; the "every test exactly once" and bug-title rules; and the repository-unchanged check.
+
 ## Kill switch and daily limits (Story 5.6)
 
 **Turning AI work off and on.** In GitHub: **Settings → Secrets and variables → Actions → Variables**, the repository variable `AGENT_ENABLED`. Only the exact value `true` lets AI work run. `false`, any other value, or no variable at all counts as off. Only people change it (the QA lead or n8n maintainer), never a workflow.
