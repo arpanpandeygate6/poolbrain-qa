@@ -1170,3 +1170,102 @@ def test_w6_rows_and_reports():
     assert W6["settings"]["errorWorkflow"] == W0["id"]
     gate = next(n for n in W6["nodes"] if n["name"] == "To the gate")["parameters"]["jsCode"]
     assert "action: 'questions-post'" in gate
+
+
+# ---------------------------------------------------------------- W3b Reactions (Story 6.4: reading reactions, 🌩️, 🙈)
+
+W3B = workflow("w3b-reactions.json")
+
+
+def test_w3b_slack_names_match_vocabulary():
+    code = code_of(W3B, "First valid reaction")
+    copied = json.loads(code.split("const REACTIONS = ", 1)[1].split(";\n", 1)[0])
+    assert copied == {k: {"names": r["slack_names"], "valid_on": r["valid_on"]} for k, r in VOCABULARY["reactions"].items()}
+
+
+def mapped(map_id=1, kind="failure", decision=None):
+    return {"map_id": map_id, "channel": "C1", "ts": f"1.{map_id}", "kind": kind, "test_id": f"api:tests/t.py::test_{map_id}",
+            "ticket": "PM-1" if kind == "questions" else "", "nightly_run_id": "7", "thread_ts": "1.0", "decision": decision}
+
+
+def first_valid(messages, pages, members=("UQA", "UQB")):
+    code = code_of(W3B, "First valid reaction").replace("$input.all()", json.dumps([{"json": {"message": {"reactions": p}}} for p in pages]))
+    return run_code(code, {}, {"To check": messages, "QA members": {"members": list(members)}})
+
+
+@needs_node
+@pytest.mark.parametrize(
+    "kind, reactions, expected",
+    [
+        ("failure", [{"name": "lightning", "users": ["UQA"]}], ("environment", "UQA")),
+        ("failure", [{"name": "see_no_evil", "users": ["UX", "UQB"]}], ("ignore", "UQB")),
+        ("failure", [{"name": "thumbsup", "users": ["UQA"]}, {"name": "lady_beetle::skin-tone-2", "users": ["UQA"]}], ("bug", "UQA")),
+        ("failure", [{"name": "repeat", "users": ["UQB"]}, {"name": "see_no_evil", "users": ["UQA"]}], ("flaky", "UQB")),
+        ("failure", [{"name": "lightning", "users": ["UOUTSIDER"]}], None),
+        ("failure", [{"name": "white_check_mark", "users": ["UQA"]}], None),
+        ("failure", [{"name": "leftwards_arrow_with_hook", "users": ["UQA"]}], None),
+        ("questions", [{"name": "white_check_mark", "users": ["UQA"]}], ("approve", "UQA")),
+        ("questions", [{"name": "lady_beetle", "users": ["UQA"]}], None),
+        ("failure", [], None),
+    ],
+)
+def test_w3b_first_valid_reaction(kind, reactions, expected):
+    out = first_valid([mapped(kind=kind)], [reactions])
+    assert ([(o["action"], o["actor_id"]) for o in out] or [None]) == [expected]
+
+
+@needs_node
+def test_w3b_qa_members_from_group_or_list():
+    code = code_of(W3B, "QA members")
+    assert run_code(code, {"ok": True, "users": ["U1", "U2"]}, {"Settings": {"qa_member_ids": " U2, U3 "}}) == [{"members": ["U1", "U2", "U3"]}]
+    assert run_code(code, {"ok": False, "error": "paid_only"}, {"Settings": {"qa_member_ids": "U3"}}) == [{"members": ["U3"]}]
+
+
+@needs_node
+def test_w3b_only_environment_and_ignore_are_handled_in_this_part():
+    found = [{**mapped(1), "action": "environment", "actor_id": "UQA"}, {**mapped(2), "action": "ignore", "actor_id": "UQB"},
+             {**mapped(3), "action": "bug", "actor_id": "UQA"}]
+    users = [{"user": {"profile": {"email": "asha@gate6.com", "display_name": "asha"}}},
+             {"user": {"profile": {}, "name": "ravi"}}, {"user": {"profile": {"email": "x@y.z"}}}]
+    code = code_of(W3B, "Decisions").replace("$input.all()", json.dumps([{"json": u} for u in users]))
+    out = run_code(code, {}, {"First valid reaction": found})
+    assert [(o["action"], o["state"], o["actor_email"], o["actor_name"]) for o in out] == [
+        ("environment", "handled", "asha@gate6.com", "asha"), ("ignore", "waiting-for-reason", "UQB@slack.invalid", "ravi")]
+
+
+@needs_node
+def test_w3b_replies_only_for_new_decisions():
+    decisions = [{**mapped(1), "action": "environment", "actor_id": "UQA", "actor_name": "asha"},
+                 {**mapped(2), "action": "ignore", "actor_id": "UQB", "actor_name": "ravi"},
+                 {**mapped(3), "action": "environment", "actor_id": "UQA", "actor_name": "asha"}]
+    code = code_of(W3B, "Replies").replace("$input.all()", json.dumps([{"json": {"id": 10}}, {"json": {"id": 11}}, {"json": {"id": None}}]))
+    env, prompt = run_code(code, {}, {"Decisions": decisions})
+    assert env["header"] == "Marked Environment by asha" and env["thread_ts"] == "1.0"
+    assert env["body"] == "<@UQA> marked this failure 🌩️ Environment. The gate is unchanged. This will show in the daily update."
+    assert env["legend"] == "↩️ within 24 h to undo"
+    assert prompt["body"] == "<@UQB>, to record 🙈 Ignore, reply in this thread with a short reason. Nothing is recorded until then."
+
+
+@needs_node
+def test_w3b_ignore_reason_from_the_members_reply_after_the_prompt():
+    waiting = [{**mapped(2, decision={"id": 11, "state": "waiting-for-reason", "actor_id": "UQB", "prompt_ts": "5.0",
+                                      "actor_name": "ravi", "actor_email": "ravi@gate6.com"}), "thread": "1.0"}]
+    pages = [{"messages": [{"user": "UQB", "ts": "4.0", "text": "before the prompt"}, {"user": "UQA", "ts": "6.0", "text": "not ravi"},
+                           {"user": "UQB", "ts": "7.0", "text": "  Test data\nreset late  "}]}]
+    code = code_of(W3B, "Reasons found").replace("$input.all()", json.dumps([{"json": p} for p in pages]))
+    [found] = run_code(code, {}, {"Waiting for a reason": waiting})
+    assert found["reason"] == "Test data reset late"
+    code = code_of(W3B, "Ignore confirmation").replace("$input.all()", json.dumps([{"json": {"id": 11}}]))
+    [msg] = run_code(code, {}, {"Reasons found": [found]})
+    assert msg["body"] == '<@UQB> marked this failure 🙈 Ignore. Reason: "Test data reset late". The gate is unchanged.'
+    code = code_of(W3B, "Reasons found").replace("$input.all()", json.dumps([{"json": {"messages": [{"user": "UQB", "ts": "4.0", "text": "old"}]}}]))
+    assert run_code(code, {}, {"Waiting for a reason": waiting}) == []
+
+
+def test_w3b_runs_one_at_a_time_and_stays_quiet_without_slack():
+    lock = next(n for n in W3B["nodes"] if n["name"] == "Take the lock")["parameters"]["query"]
+    assert "now() - interval '5 minutes'" in lock
+    assert W3B["connections"]["Slack set up?"]["main"][1] == []
+    load = next(n for n in W3B["nodes"] if n["name"] == "Load messages")["parameters"]["query"]
+    assert "interval '7 days'" in load and "d.undone_at IS NULL" in load
+    assert W3B["settings"]["errorWorkflow"] == W0["id"]

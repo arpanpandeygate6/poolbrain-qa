@@ -527,7 +527,7 @@
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- The run is handled; a posted message is mapped (kind questions, ticket, run);\n-- the gate's posting request is done.\nWITH handled AS (\n  INSERT INTO audit.w6_runs (run_id, ticket, state) VALUES ($1::bigint, $2, $3)\n  ON CONFLICT (run_id) DO NOTHING\n  RETURNING run_id\n), mapped AS (\n  INSERT INTO audit.message_map (channel, ts, kind, ticket, source_run_id)\n  SELECT $4, $5, 'questions', $2, $1::bigint WHERE $5 <> ''\n  ON CONFLICT (channel, ts) DO NOTHING\n  RETURNING id\n), dequeued AS (\n  UPDATE audit.deferred_requests SET done_at = now()\n  WHERE action = 'questions-post' AND target = $1 AND done_at IS NULL AND $3 IN ('posted', 'preview')\n  RETURNING id\n)\nSELECT (SELECT count(*) FROM handled) AS handled;",
+        "query": "-- The run is handled; a posted message is mapped (kind questions, ticket, run);\n-- the gate's posting request is done.\nWITH handled AS (\n  INSERT INTO audit.w6_runs (run_id, ticket, state) VALUES ($1::bigint, $2, $3)\n  ON CONFLICT (run_id) DO NOTHING\n  RETURNING run_id\n), mapped AS (\n  INSERT INTO audit.message_map (channel, ts, kind, ticket, source_run_id, thread_ts)\n  SELECT $4, $5, 'questions', $2, $1::bigint, $5 WHERE $5 <> ''\n  ON CONFLICT (channel, ts) DO NOTHING\n  RETURNING id\n), dequeued AS (\n  UPDATE audit.deferred_requests SET done_at = now()\n  WHERE action = 'questions-post' AND target = $1 AND done_at IS NULL AND $3 IN ('posted', 'preview')\n  RETURNING id\n)\nSELECT (SELECT count(*) FROM handled) AS handled;",
         "options": {
           "queryReplacement": "={{ [$json.run_id, $json.ticket, $json.state, $json.channel, $json.ts] }}"
         }

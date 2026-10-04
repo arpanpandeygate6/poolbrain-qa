@@ -14,7 +14,12 @@
       "valid_on": [
         "failure"
       ],
-      "meaning": "File a Jira bug with me as Reporter."
+      "meaning": "File a Jira bug with me as Reporter.",
+      "slack_names": [
+        "lady_beetle",
+        "ladybug",
+        "beetle"
+      ]
     },
     "flaky": {
       "emoji": "🔁",
@@ -22,7 +27,10 @@
       "valid_on": [
         "failure"
       ],
-      "meaning": "Create the owner's Jira ticket, then ask the agent for a quarantine PR."
+      "meaning": "Create the owner's Jira ticket, then ask the agent for a quarantine PR.",
+      "slack_names": [
+        "repeat"
+      ]
     },
     "environment": {
       "emoji": "🌩️",
@@ -30,7 +38,12 @@
       "valid_on": [
         "failure"
       ],
-      "meaning": "Record as an environment problem. The gate does not change."
+      "meaning": "Record as an environment problem. The gate does not change.",
+      "slack_names": [
+        "lightning",
+        "lightning_cloud",
+        "cloud_with_lightning"
+      ]
     },
     "ignore": {
       "emoji": "🙈",
@@ -38,7 +51,10 @@
       "valid_on": [
         "failure"
       ],
-      "meaning": "Record as ignored. A reason reply in the thread is required. The gate does not change."
+      "meaning": "Record as ignored. A reason reply in the thread is required. The gate does not change.",
+      "slack_names": [
+        "see_no_evil"
+      ]
     },
     "approve": {
       "emoji": "✅",
@@ -46,7 +62,10 @@
       "valid_on": [
         "questions"
       ],
-      "meaning": "Add these clarification questions to the Jira ticket as a comment naming me."
+      "meaning": "Add these clarification questions to the Jira ticket as a comment naming me.",
+      "slack_names": [
+        "white_check_mark"
+      ]
     },
     "undo": {
       "emoji": "↩️",
@@ -56,7 +75,10 @@
         "questions"
       ],
       "window_hours": 24,
-      "meaning": "Reverse the action taken on this message. Nothing is deleted."
+      "meaning": "Reverse the action taken on this message. Nothing is deleted.",
+      "slack_names": [
+        "leftwards_arrow_with_hook"
+      ]
     }
   },
   "triage_class": {

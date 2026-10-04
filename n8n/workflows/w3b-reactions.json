@@ -1,0 +1,1309 @@
+{
+  "id": "w3bReactions0001",
+  "name": "W3b Reactions",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "w0ErrorHandler1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000001",
+      "name": "Every 2 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000002",
+      "name": "Run now",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000003",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e3b2c3d4-0001-4000-8000-000000000300",
+              "name": "slack_channel",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "e3b2c3d4-0001-4000-8000-000000000301",
+              "name": "qa_group_id",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "e3b2c3d4-0001-4000-8000-000000000302",
+              "name": "qa_member_ids",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "e3b2c3d4-0001-4000-8000-000000000303",
+              "name": "repo",
+              "value": "arpanpandeygate6/poolbrain-qa",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000004",
+      "name": "Slack set up?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e3b2c3d4-0001-4000-8000-000000000401",
+              "leftValue": "={{ $json.slack_channel }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000005",
+      "name": "Take the lock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- One run at a time: take the lock unless another run took it in the last 5\n-- minutes (a run that died leaves it to expire).\nINSERT INTO audit.relay_state (name, value) VALUES ('w3b-lock', now()::text)\nON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = now()\n  WHERE audit.relay_state.value::timestamptz < now() - interval '5 minutes'\nRETURNING value AS locked_at;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000006",
+      "name": "Got the lock?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e3b2c3d4-0001-4000-8000-000000000601",
+              "leftValue": "={{ $json.locked_at ?? '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000007",
+      "name": "Load messages",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Mapped messages up to 7 days old, each with its live (not undone) decision.\nSELECT coalesce(json_agg(json_build_object(\n         'map_id', m.id, 'channel', m.channel, 'ts', m.ts, 'kind', m.kind, 'test_id', m.test_id, 'ticket', m.ticket,\n         'nightly_run_id', m.nightly_run_id::text, 'class', m.class, 'thread_ts', m.thread_ts,\n         'source_run_id', m.source_run_id::text,\n         'decision', CASE WHEN d.id IS NULL THEN NULL ELSE json_build_object(\n           'id', d.id, 'action', d.action, 'state', d.state, 'actor_id', d.actor_id, 'actor_email', d.actor_email,\n           'actor_name', d.actor_name, 'prompt_ts', d.prompt_ts) END) ORDER BY m.id), '[]') AS messages\nFROM audit.message_map m\nLEFT JOIN audit.reaction_decisions d ON d.map_id = m.id AND d.undone_at IS NULL\nWHERE m.created_at > now() - interval '7 days';",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000008",
+      "name": "QA group",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/usergroups.users.list",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "usergroup",
+              "value": "={{ $('Settings').first().json.qa_group_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000009",
+      "name": "QA members",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The QA group: the Slack user group's members (needs a paid Slack plan), or\n// the member IDs listed in Settings. Reactions from anyone else are ignored.\nconst settings = $('Settings').first().json;\nconst group = $input.first().json;\nconst fromGroup = group.ok && Array.isArray(group.users) ? group.users : [];\nconst fromList = String(settings.qa_member_ids || '').split(',').map((s) => s.trim()).filter(Boolean);\nreturn [{ json: { members: [...new Set([...fromGroup, ...fromList])] } }];\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000010",
+      "name": "Waiting for a reason",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        -400
+      ],
+      "parameters": {
+        "jsCode": "// 🙈 decisions waiting for their reason: look for the member's reply.\nconst list = (v) => (Array.isArray(v) ? v : JSON.parse(v || '[]'));\nreturn list($('Load messages').first().json.messages)\n  .filter((m) => m.decision && m.decision.state === 'waiting-for-reason' && m.decision.prompt_ts)\n  .map((m) => ({ json: { ...m, channel_id: m.channel, thread: m.thread_ts || m.ts } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000011",
+      "name": "Thread replies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        -400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/conversations.replies",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel_id }}"
+            },
+            {
+              "name": "ts",
+              "value": "={{ $json.thread }}"
+            },
+            {
+              "name": "oldest",
+              "value": "={{ $json.decision.prompt_ts }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000012",
+      "name": "Reasons found",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        -400
+      ],
+      "parameters": {
+        "jsCode": "// The member's first reply in the thread after the prompt is the reason.\nconst waiting = $('Waiting for a reason').all();\nreturn $input.all().flatMap((page, i) => {\n  const m = waiting[i].json;\n  const reply = (page.json.messages ?? []).find((r) => r.user === m.decision.actor_id && Number(r.ts) > Number(m.decision.prompt_ts)\n    && typeof r.text === 'string' && r.text.trim());\n  if (!reply) return [];\n  const reason = reply.text.trim().replace(/\\s+/g, ' ').slice(0, 300);\n  return [{ json: { ...m, reason, reply_ts: reply.ts } }];\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000013",
+      "name": "Record the reason",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2200,
+        -400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH saved AS (\n  UPDATE audit.reaction_decisions SET state = 'handled', reason = $2, handled_at = now()\n  WHERE id = $1::bigint AND state = 'waiting-for-reason'\n  RETURNING id\n)\nSELECT (SELECT id FROM saved) AS id;",
+        "options": {
+          "queryReplacement": "={{ [$json.decision.id, $json.reason] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000014",
+      "name": "Ignore confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        -400
+      ],
+      "parameters": {
+        "jsCode": "// S4 for 🙈 once its reason is recorded.\nconst found = $('Reasons found').all();\nreturn $input.all().flatMap((row, i) => {\n  if (!row.json.id) return [];\n  const m = found[i].json;\n  return [{ json: { kind: '', header: `Ignored by ${m.decision.actor_name}`,\n    body: `<@${m.decision.actor_id}> marked this failure 🙈 Ignore. Reason: \"${m.reason}\". The gate is unchanged.`,\n    todo: '', todo_label: '', links: [], legend: '↩️ within 24 h to undo', thread_ts: m.thread },\n    pairedItem: i }];\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000015",
+      "name": "Post confirmation",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2600,
+        -400
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "todo_label": "={{ $json.todo_label }}",
+            "links": "={{ $json.links }}",
+            "legend": "={{ $json.legend }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "legend",
+              "displayName": "legend",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000016",
+      "name": "Ignore audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        -400
+      ],
+      "parameters": {
+        "jsCode": "const failed = $input.all().filter((p) => !p.json.posted && !p.json.preview);\nif (failed.length) throw new Error(`ignore confirmation not posted: ${failed[0].json.error}`);\nreturn $('Reasons found').all().map((m) => ({ json: {\n  actor: m.json.decision.actor_email, actor_type: 'human', action: 'decision-ignore',\n  target: `${m.json.test_id || m.json.ticket}: ${m.json.reason}`.slice(0, 300), link: '' } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000017",
+      "name": "Write ignore audit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3000,
+        -400
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000018",
+      "name": "To check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// Messages with no live decision yet: read their reactions.\nconst list = (v) => (Array.isArray(v) ? v : JSON.parse(v || '[]'));\nreturn list($('Load messages').first().json.messages).filter((m) => !m.decision).map((m) => ({ json: m }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000019",
+      "name": "Reactions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        -100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/reactions.get",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $json.ts }}"
+            },
+            {
+              "name": "full",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000020",
+      "name": "First valid reaction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// The first reaction Slack lists that is valid for the message kind and was\n// added by a QA group member (EXPERIENCE.md, reaction legend). Other emoji,\n// reactions from anyone else, and any later reactions are ignored; ↩️ is\n// handled by the undo step (Story 6.8).\n// Slack names copied from contracts/vocabulary.json (reactions[*].slack_names);\n// scripts/tests/test_n8n_workflows.py checks the copy.\nconst REACTIONS = {\"bug\": {\"names\": [\"lady_beetle\", \"ladybug\", \"beetle\"], \"valid_on\": [\"failure\"]}, \"flaky\": {\"names\": [\"repeat\"], \"valid_on\": [\"failure\"]}, \"environment\": {\"names\": [\"lightning\", \"lightning_cloud\", \"cloud_with_lightning\"], \"valid_on\": [\"failure\"]}, \"ignore\": {\"names\": [\"see_no_evil\"], \"valid_on\": [\"failure\"]}, \"approve\": {\"names\": [\"white_check_mark\"], \"valid_on\": [\"questions\"]}, \"undo\": {\"names\": [\"leftwards_arrow_with_hook\"], \"valid_on\": [\"failure\", \"questions\"]}};\nconst members = new Set($('QA members').first().json.members);\nconst messages = $('To check').all();\nconst actionOf = (name, kind) => Object.entries(REACTIONS)\n  .find(([action, r]) => action !== 'undo' && r.valid_on.includes(kind) && r.names.includes(name.split('::')[0]))?.[0];\nreturn $input.all().flatMap((page, i) => {\n  const m = messages[i].json;\n  for (const reaction of page.json.message?.reactions ?? []) {\n    const action = actionOf(reaction.name ?? '', m.kind);\n    const user = action ? (reaction.users ?? []).find((u) => members.has(u)) : undefined;\n    if (user) return [{ json: { ...m, action, actor_id: user } }];\n  }\n  return [];\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000021",
+      "name": "Who reacted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/users.info",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "user",
+              "value": "={{ $json.actor_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000022",
+      "name": "Decisions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// Who reacted, and what happens. This part handles 🌩️ Environment and 🙈\n// Ignore; 🐞 Bug, 🔁 Flaky and ✅ Approve are added with Jira (Stories 6.4,\n// 6.6, 6.7) and stay unhandled until then.\nconst found = $('First valid reaction').all();\nreturn $input.all().flatMap((user, i) => {\n  const m = found[i].json;\n  if (!['environment', 'ignore'].includes(m.action)) return [];\n  const profile = user.json.user?.profile ?? {};\n  const email = profile.email || `${m.actor_id}@slack.invalid`;\n  const name = profile.display_name || profile.real_name || user.json.user?.name || m.actor_id;\n  return [{ json: { ...m, actor_email: email, actor_name: name,\n    state: m.action === 'ignore' ? 'waiting-for-reason' : 'handled' } }];\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000023",
+      "name": "Record decision",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2600,
+        -100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- One live decision per message; a second reaction can't add another. Always\n-- one row back (the new id, or null), so rows stay in line with decisions.\nWITH saved AS (\n  INSERT INTO audit.reaction_decisions (map_id, action, state, actor_id, actor_email, actor_name, handled_at)\n  VALUES ($1::bigint, $2, $3, $4, $5, $6, CASE WHEN $3 = 'handled' THEN now() END)\n  ON CONFLICT (map_id) WHERE undone_at IS NULL DO NOTHING\n  RETURNING id\n)\nSELECT (SELECT id FROM saved) AS id;",
+        "options": {
+          "queryReplacement": "={{ [$json.map_id, $json.action, $json.state, $json.actor_id, $json.actor_email, $json.actor_name] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000024",
+      "name": "Replies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// S4 (Environment) and S5 (Ignore reason prompt), in the message's thread.\n// Only decisions just recorded get a reply (none twice).\nconst decisions = $('Decisions').all();\nreturn $input.all().flatMap((row, i) => {\n  if (!row.json.id) return [];\n  const d = decisions[i].json;\n  const base = { decision_id: row.json.id, kind: '', todo: '', todo_label: '', links: [], thread_ts: d.thread_ts || d.ts, action: d.action };\n  if (d.action === 'environment') {\n    return [{ json: { ...base, header: `Marked Environment by ${d.actor_name}`,\n      body: `<@${d.actor_id}> marked this failure 🌩️ Environment. The gate is unchanged. This will show in the daily update.`,\n      legend: '↩️ within 24 h to undo' } }];\n  }\n  return [{ json: { ...base, header: 'A reason is needed for 🙈 Ignore',\n    body: `<@${d.actor_id}>, to record 🙈 Ignore, reply in this thread with a short reason. Nothing is recorded until then.`, legend: '' } }];\n});\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000025",
+      "name": "Post reply",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3000,
+        -100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "todo_label": "={{ $json.todo_label }}",
+            "links": "={{ $json.links }}",
+            "legend": "={{ $json.legend }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "legend",
+              "displayName": "legend",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000026",
+      "name": "After posting",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// Slack didn't take a reply: fail (W0 alerts). Otherwise remember the prompt's\n// ts for 🙈, so the reason reply can be found.\nconst replies = $('Replies').all();\nconst posts = $input.all();\nconst failed = posts.filter((p) => !p.json.posted && !p.json.preview);\nif (failed.length) throw new Error(`reaction reply not posted: ${failed[0].json.error}`);\nreturn posts.map((p, i) => ({ json: { decision_id: replies[i].json.decision_id, action: replies[i].json.action, prompt_ts: p.json.ts ?? '' } }));\n"
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000027",
+      "name": "Save prompt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3400,
+        -100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE audit.reaction_decisions SET prompt_ts = $2 WHERE id = $1::bigint AND $3 = 'ignore' RETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$json.decision_id, $json.prompt_ts, $json.action] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000028",
+      "name": "Decision audit",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// Audit with the member's email as the actor (FR-26).\nreturn $('Decisions').all().filter((d) => d.json.action === 'environment').map((d) => ({ json: {\n  actor: d.json.actor_email, actor_type: 'human', action: 'decision-environment',\n  target: d.json.test_id || d.json.ticket, link: d.json.nightly_run_id ? `https://github.com/${$('Settings').first().json.repo}/actions/runs/${d.json.nightly_run_id}` : '' } }));\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000029",
+      "name": "Write decision audit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3800,
+        -100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e3b2c3d4-0001-4000-8000-000000000030",
+      "name": "Release the lock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1600,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE audit.relay_state SET value = '1970-01-01T00:00:00Z', updated_at = now() WHERE name = 'w3b-lock' RETURNING name;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      },
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Every 2 minutes": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Slack set up?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack set up?": {
+      "main": [
+        [
+          {
+            "node": "Take the lock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Take the lock": {
+      "main": [
+        [
+          {
+            "node": "Got the lock?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Got the lock?": {
+      "main": [
+        [
+          {
+            "node": "Load messages",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Load messages": {
+      "main": [
+        [
+          {
+            "node": "QA group",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "QA group": {
+      "main": [
+        [
+          {
+            "node": "QA members",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "QA members": {
+      "main": [
+        [
+          {
+            "node": "Waiting for a reason",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "To check",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Release the lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Waiting for a reason": {
+      "main": [
+        [
+          {
+            "node": "Thread replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Thread replies": {
+      "main": [
+        [
+          {
+            "node": "Reasons found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reasons found": {
+      "main": [
+        [
+          {
+            "node": "Record the reason",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record the reason": {
+      "main": [
+        [
+          {
+            "node": "Ignore confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ignore confirmation": {
+      "main": [
+        [
+          {
+            "node": "Post confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post confirmation": {
+      "main": [
+        [
+          {
+            "node": "Ignore audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ignore audit": {
+      "main": [
+        [
+          {
+            "node": "Write ignore audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To check": {
+      "main": [
+        [
+          {
+            "node": "Reactions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reactions": {
+      "main": [
+        [
+          {
+            "node": "First valid reaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First valid reaction": {
+      "main": [
+        [
+          {
+            "node": "Who reacted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Who reacted": {
+      "main": [
+        [
+          {
+            "node": "Decisions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decisions": {
+      "main": [
+        [
+          {
+            "node": "Record decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record decision": {
+      "main": [
+        [
+          {
+            "node": "Replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replies": {
+      "main": [
+        [
+          {
+            "node": "Post reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post reply": {
+      "main": [
+        [
+          {
+            "node": "After posting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "After posting": {
+      "main": [
+        [
+          {
+            "node": "Save prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save prompt": {
+      "main": [
+        [
+          {
+            "node": "Decision audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision audit": {
+      "main": [
+        [
+          {
+            "node": "Write decision audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

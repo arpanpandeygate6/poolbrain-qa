@@ -20,6 +20,8 @@ export PATH="/Applications/Docker.app/Contents/Resources/bin:/usr/local/bin:/opt
 SLACK_BOT_TOKEN_GIVEN="${SLACK_BOT_TOKEN:-}"
 set -a; . ./.env; set +a
 SLACK_CHANNEL="${SLACK_CHANNEL:-}"
+SLACK_QA_GROUP="${SLACK_QA_GROUP:-}"      # a Slack user group ID (paid plans), for W3b
+SLACK_QA_MEMBERS="${SLACK_QA_MEMBERS:-}"  # and/or comma-separated member IDs, for W3b
 
 # The "QA Bot (Slack)" credential. A placeholder token is stored the first
 # time so the workflow can be installed before the Slack app exists; a real
@@ -44,11 +46,16 @@ install() {  # install <file> <id>: import (updating in place) and publish
 # The channel lives only in the Settings node of the workflows that talk to
 # Slack directly (the post sub-workflow and W7's file upload); empty means preview.
 install_with_channel() {  # install_with_channel <file> <id>
-  jq --arg ch "$SLACK_CHANNEL" \
-    '(.nodes[] | select(.name == "Settings") | .parameters.assignments.assignments[] | select(.name == "slack_channel") | .value) = $ch' \
-    "$1" > /tmp/with-channel.json
+  with_settings "$1" > /tmp/with-channel.json
   install /tmp/with-channel.json "$2"
   rm -f /tmp/with-channel.json
+}
+with_settings() {  # the file with the Slack settings from n8n/.env filled in
+  jq --arg ch "$SLACK_CHANNEL" --arg grp "$SLACK_QA_GROUP" --arg mem "$SLACK_QA_MEMBERS" '
+    (.nodes[] | select(.name == "Settings") | .parameters.assignments.assignments[]) |= (
+      if .name == "slack_channel" then .value = $ch
+      elif .name == "qa_group_id" then .value = $grp
+      elif .name == "qa_member_ids" then .value = $mem else . end)' "$1"
 }
 install_with_channel workflows/slack-post-message.json slackPostMsg0001
 install workflows/w0-error-handler.json w0ErrorHandler1
@@ -64,12 +71,12 @@ install workflows/audit-record-github-runs.json runRecorder00001
 install workflows/ready-for-qa-notice.json readyNotice00001
 install workflows/w4-daily-update.json w4DailyUpdate001
 install_with_channel workflows/w7-weekly-audit.json w7WeeklyAudit001
-# W1, its follow-up, W2, W3 and W6 are installed but not switched on: switch them on only
+# W1, its follow-up, W2, W3, W6 and W3b are installed but not switched on: switch them on only
 # when AI work should start (docs/runbook.md, "W1 Ticket watcher"). Re-importing
 # switches them off.
-for w1 in w1-ticket-watcher w1-follow-up w2-nightly-watcher w3-triage-poster w6-questions-poster; do
-  docker compose exec -T n8n sh -c 'cat > /tmp/w.json && n8n import:workflow --input=/tmp/w.json; s=$?; rm -f /tmp/w.json; exit $s' \
-    < "workflows/$w1.json" 2>&1 | tail -1
+for w1 in w1-ticket-watcher w1-follow-up w2-nightly-watcher w3-triage-poster w6-questions-poster w3b-reactions; do
+  with_settings "workflows/$w1.json" | docker compose exec -T n8n sh -c 'cat > /tmp/w.json && n8n import:workflow --input=/tmp/w.json; s=$?; rm -f /tmp/w.json; exit $s' \
+    2>&1 | tail -1
 done
 
 docker compose restart n8n >/dev/null 2>&1

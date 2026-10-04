@@ -582,9 +582,9 @@
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- Remember the message for this night, and map a posted failure message.\nWITH remembered AS (\n  UPDATE audit.triage_requests SET posted = posted || to_jsonb($2::text), updated_at = now()\n  WHERE nightly_run_id = $1::bigint AND NOT posted ? $2\n  RETURNING nightly_run_id\n), mapped AS (\n  INSERT INTO audit.message_map (channel, ts, kind, test_id, nightly_run_id, class)\n  SELECT $3, $4, 'failure', $5, $1::bigint, $6 WHERE $4 <> '' AND $5 <> ''\n  ON CONFLICT (channel, ts) DO NOTHING\n  RETURNING id\n)\nSELECT (SELECT count(*) FROM remembered) AS remembered, (SELECT count(*) FROM mapped) AS mapped;",
+        "query": "-- Remember the message for this night, and map a posted failure message.\nWITH remembered AS (\n  UPDATE audit.triage_requests SET posted = posted || to_jsonb($2::text), updated_at = now()\n  WHERE nightly_run_id = $1::bigint AND NOT posted ? $2\n  RETURNING nightly_run_id\n), mapped AS (\n  INSERT INTO audit.message_map (channel, ts, kind, test_id, nightly_run_id, class, thread_ts)\n  SELECT $3, $4, 'failure', $5, $1::bigint, $6, $7 WHERE $4 <> '' AND $5 <> ''\n  ON CONFLICT (channel, ts) DO NOTHING\n  RETURNING id\n)\nSELECT (SELECT count(*) FROM remembered) AS remembered, (SELECT count(*) FROM mapped) AS mapped;",
         "options": {
-          "queryReplacement": "={{ [$json.nightly_run_id, $json.key, $json.channel, $json.ts, $json.test_id, $json.class] }}"
+          "queryReplacement": "={{ [$json.nightly_run_id, $json.key, $json.channel, $json.ts, $json.test_id, $json.class, $json.thread_ts] }}"
         }
       },
       "credentials": {
