@@ -81,6 +81,8 @@ def load_inventory(path: Path) -> list[str]:
         layers = flow.get("layers")
         if not isinstance(layers, list) or not layers or any(layer not in LAYERS for layer in layers):
             raise LintError(f"{name}: flow '{flow_id}' 'layers' must be a non-empty list of {', '.join(LAYERS)}")
+        if not isinstance(flow.get("ui_top10", False), bool):
+            raise LintError(f"{name}: flow '{flow_id}' 'ui_top10' must be true or false")
         _check_rules(name, flow_id, flow.get("rules"))
         flow_ids.append(flow_id)
     return flow_ids
