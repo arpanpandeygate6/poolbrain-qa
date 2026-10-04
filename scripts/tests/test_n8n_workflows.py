@@ -393,3 +393,116 @@ def test_broken_caps_fail_the_caller_so_w0_alerts():
 
 def test_gate_is_a_helper_and_never_alerts_about_itself():
     assert "errorWorkflow" not in GATE["settings"]
+
+
+# ---------------------------------------------------------------- W4 Daily QA update (Story 7.1)
+
+W4 = workflow("w4-daily-update.json")
+SAMPLE_SUMMARY = json.loads((ROOT / "contracts" / "samples" / "nightly-summary.sample.json").read_text())
+
+
+def night(run_id, status="passed", passed=100, failed=0, retried=0, quarantined=0, failures=(), quarantine=()):
+    return {**SAMPLE_SUMMARY, "nightly_run_id": run_id, "status": status,
+            "counts": {"passed": passed, "failed": failed, "passed_on_retry": retried, "quarantined": quarantined, "skipped": 0},
+            "failures": list(failures), "quarantine": list(quarantine)}
+
+
+def daily_update(summaries, newest_hours_ago=7, switch="true", newest_id=None):
+    started = datetime.now(UTC).timestamp() - newest_hours_ago * 3600
+    newest = {"id": newest_id or (summaries[0]["nightly_run_id"] if summaries else 1),
+              "run_started_at": datetime.fromtimestamp(started, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    nodes = {"Nightly runs": {"workflow_runs": [newest]}, "Read AGENT_ENABLED": {"value": switch} if switch else {"error": {}}}
+    if summaries:
+        nodes["Read summary"] = [{"data": s} for s in summaries]
+    return run_code(code_of(W4, "Build update"), {}, nodes)[0]
+
+
+def test_w4_status_words_match_vocabulary():
+    code = code_of(W4, "Build update")
+    for key, word in VOCABULARY["test_status"].items():
+        assert f"'{word}'" in code, key
+
+
+def test_w4_runs_at_0930_ist_and_reports_errors_to_w0():
+    trigger = next(n for n in W4["nodes"] if n["name"] == "Every day 09:30 IST")
+    assert trigger["parameters"]["rule"]["interval"][0]["expression"] == "0 4 * * *"  # 04:00 UTC
+    assert W4["settings"]["errorWorkflow"] == W0["id"]
+
+
+@needs_node
+def test_w4_failed_night():
+    failures = [{"test_id": "api:tests/test_jobs.py::test_create_job", "flow_id": "job-creation", "status": "failed"},
+                {"test_id": "api:tests/test_routes.py::test_route_sort", "flow_id": "routing", "status": "quarantined"},
+                {"test_id": "ui:tests/login.spec.ts > Login > office admin signs in", "flow_id": "login", "status": "passed-on-retry"}]
+    quarantine = [{"test_id": "api:tests/test_routes.py::test_route_sort", "owner": "ravi", "jira": "PM-5679", "deadline": "2026-10-15"}]
+    out = daily_update([night(9, "failed", 212, 3, 1, 1, failures, quarantine)])
+    assert out["header"].startswith("Daily QA update — ") and out["header"].endswith(", 09:30 IST")
+    assert out["kind"] == ""
+    lines = out["body"].split("\n")
+    assert lines[0] == "Nightly UAT: *FAILED* — 212 passed, 3 failed, 1 passed on retry."
+    assert lines[1] == "Coverage: 14 of 40 regression flows automated (35%)."
+    assert lines[2] == "Flaky rate (last 1 night): 0.5%."
+    assert "*Failures and decisions*" in lines
+    assert "• `test_create_job` — FAILED — no decision yet" in lines
+    assert "• `office admin signs in` — PASSED ON RETRY — no decision yet" in lines
+    assert "• `test_route_sort` — *QUARANTINED*, owner ravi, PM-5679, deadline 15 Oct" in lines
+    assert lines[-1] == "Datadog: not available."
+    assert [link["label"] for link in out["links"]] == ["Nightly run", "Allure report"]
+    assert out["ai_off"] is False
+
+
+@needs_node
+def test_w4_passed_night_and_flaky_rate_above_target():
+    nights = [night(20 - i, retried=3 if i < 2 else 0) for i in range(14)]  # 6 retried of 1406 tests ran
+    out = daily_update(nights)
+    assert "No failures last night." in out["body"]
+    assert "Flaky rate (last 14 nights): 0.4%." in out["body"]
+    out = daily_update([night(5, retried=5, passed=95)])
+    assert "Flaky rate (last 1 night): 5.0%. Above the 2% target. Review flaky tests and react 🔁 Flaky to quarantine them." in out["body"]
+
+
+@needs_node
+def test_w4_cuts_long_lists():
+    failures = [{"test_id": f"api:tests/t.py::test_{i:02d}", "flow_id": "x", "status": "failed"} for i in range(13)]
+    out = daily_update([night(9, "failed", failed=13, failures=failures)])
+    assert "• `test_09` — FAILED — no decision yet" in out["body"]
+    assert "test_10" not in out["body"]
+    assert "and 3 more — see the run" in out["body"]
+
+
+@pytest.mark.parametrize("case", ["no summaries", "stale run", "newest run has no summary"])
+@needs_node
+def test_w4_no_result_still_posts(case):
+    if case == "no summaries":
+        out = daily_update([])
+    elif case == "stale run":
+        out = daily_update([night(9)], newest_hours_ago=48)
+    else:
+        out = daily_update([night(8)], newest_id=9)
+    assert out["body"].startswith("Nightly run: no result found for last night.")
+    assert "Datadog: not available." in out["body"] and out["links"] == []
+
+
+@needs_node
+@pytest.mark.parametrize("switch", [None, "false"])
+def test_w4_ai_off_line(switch):
+    out = daily_update([night(9)], switch=switch)
+    assert out["body"].endswith("AI work is off (`AGENT_ENABLED` is not `true`): failures are not classified.")
+    assert out["ai_off"] is True
+
+
+@needs_node
+@pytest.mark.parametrize(
+    "result, ai_off, action",
+    [({"posted": True, "link": "l"}, False, "daily-update-posted"), ({"preview": True}, True, "daily-update-preview-ai-off")],
+)
+def test_w4_audit(result, ai_off, action):
+    [out] = run_code(code_of(W4, "Audit fields"), result, {"Build update": {"nightly_run_id": 9, "ai_off": ai_off}})
+    assert out["action"] == action and out["actor"] == "n8n:w4-daily-update" and out["target"] == "nightly 9"
+
+
+@needs_node
+def test_w4_failed_post_fails_the_run():
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_code(code_of(W4, "Audit fields"), {"posted": False, "error": "Slack said x"}, {"Build update": {}})
+    assert "Daily update not posted: Slack said x" in failure.value.stderr

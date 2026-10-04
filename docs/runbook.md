@@ -328,6 +328,27 @@ Nothing below exists yet. The code above is ready for it.
 - The artifact reading (find the download link, download without GitHub's login, unzip, read JSON) worked on a real nightly artifact. GitHub's storage rejects the GitHub login, so the download is done in two steps.
 - The temporary workflows and test waiting-list entries were deleted. The audit entries from the test remain, because the audit log is append-only.
 
+## Daily QA update W4 (Story 7.1)
+
+**Nightly side.** The nightly's **Failure list** job also saves `nightly-summary` (30 days, `contracts/nightly-summary.schema.json`, built by `scripts/nightly_summary.py`). It holds the gate's verdict (`passed`, `failed`, or `not-run` when no tests ran), the counts (passed, failed, passed on retry, quarantined, skipped), coverage (flows automated of all flows, worked out like the coverage report), up to 50 failures, the quarantine registry as it was that night, and the links. If its check fails, that step fails and nothing is saved; the test result is unchanged.
+
+**n8n side.** "W4 Daily QA update" (`n8n/workflows/w4-daily-update.json`) runs every day at 04:00 UTC (09:30 IST):
+1. reads the last 14 **scheduled** nightly runs (runs started by a merge or by hand don't count as "last night") and downloads each one's `nightly-summary`;
+2. builds the update: the header "Daily QA update — <date>, 09:30 IST"; "Nightly UAT: **PASSED**/**FAILED** — N passed, N failed, N passed on retry."; "Coverage: N of M regression flows automated (P%)."; "Flaky rate (last 14 nights): P%." (fewer nights are named; above 2% it adds "Above the 2% target. Review flaky tests and react 🔁 Flaky to quarantine them."); the failures, or "No failures last night."; the quarantined tests with owner, Jira key and deadline; lists cut at 10 with "and N more — see the run"; and the links Nightly run · Allure report;
+3. always posts, even without a result: "Nightly run: no result found for last night." when the newest scheduled run is older than 36 hours or saved no summary;
+4. adds "AI work is off (`AGENT_ENABLED` is not `true`): failures are not classified." when the switch is off (W4 itself is never stopped by it);
+5. writes an audit entry (`n8n:w4-daily-update`, `daily-update-posted` or `daily-update-preview`, with `-ai-off` when the switch is off). If Slack doesn't take the update, the run fails and W0 alerts.
+
+The flaky rate is the tests that failed and then passed on retry, divided by all tests that ran (passed, failed, passed on retry, quarantined), over the nights that have a summary.
+
+**Not there yet:**
+- Triage classes and people's decisions (🐞, 🌩️, 🙈 with reasons) come with Epic 6; until then each failure says "no decision yet" and there is no "Ignored" section.
+- Datadog: there is no Datadog connection, so the line always says "Datadog: not available."
+
+**Laptop host.** W4 posts only if the Mac is awake with n8n running at 09:30 IST. If it isn't, that day's update is skipped (the next day's covers its own night).
+
+**Checked on 4 Oct 2026:** the message rules are covered by unit tests (failed and passed nights, flaky rate above and below 2%, cutting long lists, no result, AI off). A live run in n8n read GitHub, found no scheduled nightly yet (the 02:30 IST schedule had not run from `main` yet), and correctly previewed "Nightly run: no result found for last night." with the AI-off line, and wrote its audit entry. The first update with real numbers is the morning after the first scheduled nightly that has this story's `nightly-summary` step.
+
 ## Ready-for-QA notice (Story 5.7)
 
 The n8n workflow "Ready-for-QA notice" (`n8n/workflows/ready-for-qa-notice.json`) is the early n8n demo: Jira, GitHub and Slack working together. It only reads Jira and GitHub; it never writes to Jira or starts a GitHub workflow.

@@ -1,0 +1,640 @@
+{
+  "id": "w4DailyUpdate001",
+  "name": "W4 Daily QA update",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "w0ErrorHandler1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000001",
+      "name": "Every day 09:30 IST",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000002",
+      "name": "Run now",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000003",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c9b2c3d4-0001-4000-8000-000000000301",
+              "name": "repo",
+              "value": "arpanpandeygate6/poolbrain-qa",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000004",
+      "name": "Nightly runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/workflows/nightly.yml/runs?event=schedule&status=completed&per_page=14",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000005",
+      "name": "Runs to read",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// The last 14 scheduled nightly runs, newest first; each may have a nightly-summary.\nconst runs = $('Nightly runs').first().json.workflow_runs;\nreturn (Array.isArray(runs) ? runs : []).slice(0, 14).map((r) => ({ json: { run_id: r.id } }));\n"
+      }
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000006",
+      "name": "List summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/runs/{{ $json.run_id }}/artifacts?name=nightly-summary",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000007",
+      "name": "Has summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Runs from before Story 7.1 have no nightly-summary; they are skipped.\nreturn $input.all()\n  .map((i) => (i.json.artifacts ?? []).find((a) => a.name === 'nightly-summary' && !a.expired))\n  .filter(Boolean)\n  .map((a) => ({ json: { url: a.archive_download_url } }));\n"
+      }
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000008",
+      "name": "Get download link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000009",
+      "name": "Download summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.headers.location }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000010",
+      "name": "Unzip",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        -200
+      ],
+      "parameters": {
+        "operation": "decompress",
+        "binaryPropertyName": "data",
+        "outputPrefix": "file_"
+      }
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000011",
+      "name": "Read summary",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1980,
+        -200
+      ],
+      "parameters": {
+        "operation": "fromJson",
+        "binaryPropertyName": "file_0",
+        "options": {}
+      }
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000012",
+      "name": "Read AGENT_ENABLED",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/variables/AGENT_ENABLED",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000013",
+      "name": "Build update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// S13, the daily QA update (EXPERIENCE.md M13). It always posts, even with\n// no result, so a missing nightly is never silent.\n\n// Status words, copied from contracts/vocabulary.json (test_status).\n// scripts/tests/test_n8n_workflows.py checks that this copy still matches.\nconst STATUS = { passed: 'PASSED', failed: 'FAILED', 'passed-on-retry': 'PASSED ON RETRY', quarantined: 'QUARANTINED' };\nconst MAX_LINES = 10;\nconst FLAKY_TARGET = 2; // percent (NFR-03)\n\nconst now = new Date();\nconst istParts = (date, options) => Object.fromEntries(\n  new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', ...options }).formatToParts(date).map((p) => [p.type, p.value]),\n);\nconst today = istParts(now, { day: '2-digit', month: 'short' });\nconst shortDate = (ymd) => { const d = istParts(new Date(`${ymd}T12:00:00Z`), { day: '2-digit', month: 'short' }); return `${d.day} ${d.month}`; };\nconst shortName = (id) => id.split('::').pop().split(' > ').pop();\nconst cut = (lines) => lines.length > MAX_LINES\n  ? [...lines.slice(0, MAX_LINES), `and ${lines.length - MAX_LINES} more — see the run`] : lines;\n\nconst summaries = $('Read summary').isExecuted\n  ? $('Read summary').all().map((i) => i.json.data).filter((s) => s && s.nightly_run_id) : [];\nconst newestRun = ($('Nightly runs').first().json.workflow_runs ?? [])[0];\n// Last night = the newest scheduled run, if it started in the last 36 hours and saved a summary.\nconst fresh = newestRun && now - new Date(newestRun.run_started_at ?? newestRun.created_at) < 36 * 3600000;\nconst last = fresh ? summaries.find((s) => s.nightly_run_id === newestRun.id) : undefined;\n\nconst lines = [];\nconst links = [];\nif (!last) {\n  lines.push('Nightly run: no result found for last night.');\n} else {\n  const c = last.counts;\n  const head = last.status === 'not-run' ? 'Nightly UAT: not run.' : `Nightly UAT: *${STATUS[last.status]}* — ${c.passed} passed, ${c.failed} failed, ${c.passed_on_retry} passed on retry.`;\n  lines.push(head);\n  const { automated, total } = last.coverage;\n  lines.push(`Coverage: ${automated} of ${total} regression flows automated (${total ? Math.round((automated * 100) / total) : 0}%).`);\n  links.push({ label: 'Nightly run', url: last.links.run });\n  if (last.links.report) links.push({ label: 'Allure report', url: last.links.report });\n}\n\n// Flaky rate (NFR-03): tests that failed and then passed on retry, out of all tests that ran.\nconst nights = summaries.slice(0, 14);\nif (nights.length) {\n  const retried = nights.reduce((n, s) => n + s.counts.passed_on_retry, 0);\n  const ran = nights.reduce((n, s) => n + s.counts.passed + s.counts.failed + s.counts.passed_on_retry + s.counts.quarantined, 0);\n  const rate = ran ? (retried * 100) / ran : 0;\n  const label = nights.length < 14 ? `last ${nights.length} night${nights.length === 1 ? '' : 's'}` : 'last 14 nights';\n  let line = `Flaky rate (${label}): ${rate.toFixed(1)}%.`;\n  if (rate > FLAKY_TARGET) line += ' Above the 2% target. Review flaky tests and react 🔁 Flaky to quarantine them.';\n  lines.push(line);\n}\n\nif (last) {\n  // Triage classes and decisions arrive with Epic 6; until then every failure has none.\n  const failures = last.failures.filter((f) => f.status !== 'quarantined')\n    .map((f) => `• \\`${shortName(f.test_id)}\\` — ${STATUS[f.status]} — no decision yet`);\n  lines.push('');\n  if (failures.length) {\n    lines.push('*Failures and decisions*', ...cut(failures));\n  } else if (last.status !== 'not-run') {\n    lines.push('No failures last night.');\n  }\n  const quarantined = last.quarantine.map((q) => `• \\`${shortName(q.test_id)}\\` — *QUARANTINED*, owner ${q.owner}, ${q.jira}, deadline ${shortDate(q.deadline)}`);\n  if (quarantined.length) lines.push('', '*Quarantined*', ...cut(quarantined));\n}\n\nlines.push('', 'Datadog: not available.');\nconst switchValue = $('Read AGENT_ENABLED').first().json.value;\nif (switchValue !== 'true') lines.push('AI work is off (`AGENT_ENABLED` is not `true`): failures are not classified.');\n\nreturn [{\n  json: {\n    kind: '',\n    header: `Daily QA update — ${today.day} ${today.month}, 09:30 IST`,\n    body: lines.join('\\n').replace(/\\n{3,}/g, '\\n\\n'),\n    todo: '',\n    links,\n    thread_ts: '',\n    nightly_run_id: last?.nightly_run_id ?? null,\n    ai_off: switchValue !== 'true',\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000014",
+      "name": "Post update",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "links": "={{ $json.links }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000015",
+      "name": "Audit fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// One audit entry per update. If Slack didn't take it, fail so W0 alerts.\nconst r = $input.first().json;\nconst u = $('Build update').first().json;\nif (!r.posted && !r.preview) throw new Error(`Daily update not posted: ${r.error}`);\nreturn [{\n  json: {\n    actor: 'n8n:w4-daily-update',\n    actor_type: 'n8n',\n    action: (r.posted ? 'daily-update-posted' : 'daily-update-preview') + (u.ai_off ? '-ai-off' : ''),\n    target: u.nightly_run_id ? `nightly ${u.nightly_run_id}` : 'no nightly result',\n    link: r.link || '',\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "c9b2c3d4-0001-4000-8000-000000000016",
+      "name": "Write audit entry",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1540,
+        100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Every day 09:30 IST": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Nightly runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nightly runs": {
+      "main": [
+        [
+          {
+            "node": "Runs to read",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Read AGENT_ENABLED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Runs to read": {
+      "main": [
+        [
+          {
+            "node": "List summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List summary": {
+      "main": [
+        [
+          {
+            "node": "Has summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has summary": {
+      "main": [
+        [
+          {
+            "node": "Get download link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get download link": {
+      "main": [
+        [
+          {
+            "node": "Download summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download summary": {
+      "main": [
+        [
+          {
+            "node": "Unzip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unzip": {
+      "main": [
+        [
+          {
+            "node": "Read summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read AGENT_ENABLED": {
+      "main": [
+        [
+          {
+            "node": "Build update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build update": {
+      "main": [
+        [
+          {
+            "node": "Post update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post update": {
+      "main": [
+        [
+          {
+            "node": "Audit fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit fields": {
+      "main": [
+        [
+          {
+            "node": "Write audit entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

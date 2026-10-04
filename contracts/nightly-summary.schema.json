@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "nightly-summary",
+  "title": "nightly-summary",
+  "description": "One nightly run in brief, saved by the nightly report job as the artifact `nightly-summary` (Story 7.1, AD-5). Consumer: n8n W4, the daily QA update (last night's result, and the last 14 nights for the flaky rate).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "nightly_run_id",
+    "event",
+    "started_at",
+    "status",
+    "counts",
+    "coverage",
+    "failures",
+    "quarantine",
+    "links"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "nightly_run_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "event": {
+      "enum": [
+        "schedule",
+        "push",
+        "workflow_dispatch"
+      ],
+      "description": "What started the run; the daily update uses scheduled runs."
+    },
+    "started_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "UTC, ISO-8601."
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed",
+        "not-run"
+      ],
+      "description": "The gate's verdict: failed when any non-quarantined test failed after retries; not-run when no tests ran."
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "failed",
+        "passed_on_retry",
+        "quarantined",
+        "skipped"
+      ],
+      "properties": {
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passed_on_retry": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "quarantined": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automated",
+        "total"
+      ],
+      "properties": {
+        "automated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "description": "Regression flows automated, as in the nightly's coverage report (Story 2.5)."
+    },
+    "failures": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Failed, quarantined and passed-on-retry tests, in that order (at most 50).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "test_id",
+          "flow_id",
+          "status"
+        ],
+        "properties": {
+          "test_id": {
+            "type": "string",
+            "pattern": "^(api:[^\\s]+::.+|ui:.+ > .+)$"
+          },
+          "flow_id": {
+            "type": "string",
+            "pattern": "^([a-z0-9]+(-[a-z0-9]+)*)?$",
+            "description": "Empty when the test's flow is unknown."
+          },
+          "status": {
+            "enum": [
+              "failed",
+              "quarantined",
+              "passed-on-retry"
+            ]
+          }
+        }
+      }
+    },
+    "quarantine": {
+      "type": "array",
+      "description": "flows/quarantine.yaml as it was for this run.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "test_id",
+          "owner",
+          "jira",
+          "deadline"
+        ],
+        "properties": {
+          "test_id": {
+            "type": "string",
+            "pattern": "^(api:[^\\s]+::.+|ui:.+ > .+)$"
+          },
+          "owner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "jira": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$"
+          },
+          "deadline": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          }
+        }
+      }
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run",
+        "report"
+      ],
+      "properties": {
+        "run": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "report": {
+          "type": "string",
+          "description": "The Allure report artifact; empty when there is none."
+        }
+      }
+    }
+  }
+}

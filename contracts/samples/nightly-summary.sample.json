@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "nightly_run_id": 37213558288,
+  "event": "schedule",
+  "started_at": "2026-10-03T21:00:12Z",
+  "status": "failed",
+  "counts": {
+    "passed": 212,
+    "failed": 3,
+    "passed_on_retry": 1,
+    "quarantined": 1,
+    "skipped": 0
+  },
+  "coverage": {
+    "automated": 14,
+    "total": 40
+  },
+  "failures": [
+    {
+      "test_id": "api:tests/test_job_creation.py::test_create_job",
+      "flow_id": "job-creation",
+      "status": "failed"
+    },
+    {
+      "test_id": "api:tests/test_routes.py::test_route_sort",
+      "flow_id": "routing",
+      "status": "quarantined"
+    },
+    {
+      "test_id": "ui:tests/login.spec.ts > Login > office admin signs in",
+      "flow_id": "login",
+      "status": "passed-on-retry"
+    }
+  ],
+  "quarantine": [
+    {
+      "test_id": "api:tests/test_routes.py::test_route_sort",
+      "owner": "ravi",
+      "jira": "PM-5679",
+      "deadline": "2026-10-15"
+    }
+  ],
+  "links": {
+    "run": "https://github.com/arpanpandeygate6/poolbrain-qa/actions/runs/37213558288",
+    "report": "https://github.com/arpanpandeygate6/poolbrain-qa/actions/runs/37213558288/artifacts/1"
+  }
+}
