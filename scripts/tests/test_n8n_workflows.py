@@ -1222,15 +1222,18 @@ def test_w3b_qa_members_from_group_or_list():
 
 
 @needs_node
-def test_w3b_only_environment_and_ignore_are_handled_in_this_part():
+def test_w3b_decisions_and_the_two_paths():
     found = [{**mapped(1), "action": "environment", "actor_id": "UQA"}, {**mapped(2), "action": "ignore", "actor_id": "UQB"},
              {**mapped(3), "action": "bug", "actor_id": "UQA"}]
     users = [{"user": {"profile": {"email": "asha@gate6.com", "display_name": "asha"}}},
-             {"user": {"profile": {}, "name": "ravi"}}, {"user": {"profile": {"email": "x@y.z"}}}]
+             {"user": {"profile": {}, "name": "ravi"}}, {"user": {"profile": {"email": "asha@gate6.com", "real_name": "Asha K"}}}]
     code = code_of(W3B, "Decisions").replace("$input.all()", json.dumps([{"json": u} for u in users]))
     out = run_code(code, {}, {"First valid reaction": found})
     assert [(o["action"], o["state"], o["actor_email"], o["actor_name"]) for o in out] == [
-        ("environment", "handled", "asha@gate6.com", "asha"), ("ignore", "waiting-for-reason", "UQB@slack.invalid", "ravi")]
+        ("environment", "handled", "asha@gate6.com", "asha"), ("ignore", "waiting-for-reason", "UQB@slack.invalid", "ravi"),
+        ("bug", "handled", "asha@gate6.com", "Asha K")]
+    slack_only = run_code(code_of(W3B, "Slack-only decisions").replace("$input.all()", json.dumps([{"json": o} for o in out])), {})
+    assert [o["action"] for o in slack_only] == ["environment", "ignore"]
 
 
 @needs_node
@@ -1239,7 +1242,7 @@ def test_w3b_replies_only_for_new_decisions():
                  {**mapped(2), "action": "ignore", "actor_id": "UQB", "actor_name": "ravi"},
                  {**mapped(3), "action": "environment", "actor_id": "UQA", "actor_name": "asha"}]
     code = code_of(W3B, "Replies").replace("$input.all()", json.dumps([{"json": {"id": 10}}, {"json": {"id": 11}}, {"json": {"id": None}}]))
-    env, prompt = run_code(code, {}, {"Decisions": decisions})
+    env, prompt = run_code(code, {}, {"Slack-only decisions": decisions})
     assert env["header"] == "Marked Environment by asha" and env["thread_ts"] == "1.0"
     assert env["body"] == "<@UQA> marked this failure 🌩️ Environment. The gate is unchanged. This will show in the daily update."
     assert env["legend"] == "↩️ within 24 h to undo"
@@ -1269,3 +1272,109 @@ def test_w3b_runs_one_at_a_time_and_stays_quiet_without_slack():
     load = next(n for n in W3B["nodes"] if n["name"] == "Load messages")["parameters"]["query"]
     assert "interval '7 days'" in load and "d.undone_at IS NULL" in load
     assert W3B["settings"]["errorWorkflow"] == W0["id"]
+
+
+# ---------------------------------------------------------------- W3b Jira actions (Stories 6.4 🐞, 6.7 ✅)
+
+BUG = workflow("reaction-file-bug.json")
+SENDQ = workflow("reaction-send-questions.json")
+REACTION = {"test_id": "api:tests/test_jobs.py::test_create_job", "flow_id": "job-creation", "bug_title": "Job create returns 500",
+            "nightly_run_id": "7", "channel": "C1", "ts": "1.2", "actor_email": "asha@gate6.com", "actor_name": "Asha", "repo": "o/r"}
+BUG_SETTINGS = {"jira_url": "https://jira", "project": "PM", "issue_type": "Bug", "label": "filed-via-qa-bot"}
+
+
+def build_bug(users=({"accountId": "acc-1"},), reaction=REACTION):
+    nodes = {"Reaction": reaction, "Settings": BUG_SETTINGS, "Jira user": {"statusCode": 200, "body": list(users)},
+             "Nightly run": {"statusCode": 200, "body": {"run_started_at": "2026-10-03T21:00:00Z"}},
+             "Slack link": {"ok": True, "permalink": "https://slack/p1"}}
+    return run_code(code_of(BUG, "Build bug"), {}, nodes)[0]
+
+
+@needs_node
+def test_bug_fields_have_no_raw_evidence_and_set_the_reporter():
+    out = build_bug()
+    fields = out["with_reporter"]
+    assert fields["summary"] == "Job create returns 500" and fields["labels"] == ["filed-via-qa-bot"]
+    assert fields["reporter"] == {"id": "acc-1"} and "reporter" not in out["without_reporter"]
+    text = json.dumps(fields["description"])
+    assert "Filed via QA bot, by Asha from Slack." in text and "Nightly run: Oct 04, 2026" in text
+    assert "api:tests/test_jobs.py::test_create_job" in text and "Flow: job-creation" in text
+    hrefs = [m["attrs"]["href"] for p in fields["description"]["content"] for c in p["content"] for m in c.get("marks", []) if m["type"] == "link"]
+    assert hrefs == ["https://github.com/o/r/actions/runs/7", "https://github.com/o/r/actions/runs/7#artifacts", "https://slack/p1"]
+    unclassified = build_bug(users=(), reaction={**REACTION, "bug_title": ""})
+    assert unclassified["with_reporter"]["summary"] == "Nightly failure: api:tests/test_jobs.py::test_create_job"
+    assert "reporter" not in unclassified["with_reporter"]
+
+
+@needs_node
+def test_bug_creation_outcomes():
+    created = code_of(BUG, "Created?")
+    assert run_code(created, {"statusCode": 201, "body": {"key": "PM-9"}}) == [{"key": "PM-9", "retry": False}]
+    refused = {"statusCode": 400, "body": {"errors": {"reporter": "Field 'reporter' cannot be set."}}}
+    assert run_code(created, refused) == [{"key": "", "retry": True}]
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_code(created, {"statusCode": 400, "body": {"errors": {"issuetype": "Bad type"}}})
+    assert "Jira refused the bug (400)" in failure.value.stderr
+    verify = code_of(BUG, "Verify reporter")
+    ok = {"statusCode": 200, "body": {"key": "PM-9", "fields": {"reporter": {"accountId": "acc-1"}}}}
+    assert run_code(verify, ok, {"Build bug": {"account_id": "acc-1"}}) == [{"key": "PM-9", "reporter_ok": True}]
+    assert run_code(verify, ok, {"Build bug": {"account_id": ""}})[0]["reporter_ok"] is False
+    [comment] = run_code(code_of(BUG, "Filed-by comment"), {}, {"Reaction": REACTION})
+    assert "Filed by Asha (asha@gate6.com) via Slack. Jira didn't accept them as Reporter. Filed via QA bot." in json.dumps(comment)
+
+
+@needs_node
+def test_send_questions_comment():
+    reads = [{"found": True, "data": QUESTIONS}, {"found": True, "data": {"pr_url": "https://github.com/o/r/pull/5"}}]
+    nodes = {"Reaction": {"ticket": "PM-1234", "source_run_id": "3", "actor_name": "Asha"}, "Read artifacts": reads,
+             "Slack link": {"permalink": "https://slack/p2"}}
+    [out] = run_code(code_of(SENDQ, "Build comment"), {}, nodes)
+    content = out["body"]["content"]
+    assert content[0]["content"][0]["text"] == "Clarification questions from QA, approved by Asha — Filed via QA bot"
+    assert [i["content"][0]["content"][0]["text"] for i in content[1]["content"]] == [q["question"] for q in QUESTIONS["questions"]]
+    with pytest.raises(subprocess.CalledProcessError):
+        run_code(code_of(SENDQ, "Build comment"), {}, {**nodes, "Read artifacts": [{"found": False}, reads[1]]})
+    result = run_code(code_of(SENDQ, "Result"), {"statusCode": 201, "body": {"id": "100"}},
+                      {"Reaction": {"ticket": "PM-1234"}, "Settings": {"jira_url": "https://jira"}})
+    assert result == [{"jira_key": "PM-1234", "url": "https://jira/browse/PM-1234?focusedCommentId=100"}]
+
+
+@needs_node
+def test_w3b_jira_decisions_wait_for_the_gate():
+    later = datetime.fromtimestamp(datetime.now(UTC).timestamp() + 600, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    decisions = [{**mapped(1), "action": "bug"}, {**mapped(2, kind="questions"), "action": "approve"},
+                 {**mapped(3), "action": "environment"}, {**mapped(4), "action": "bug", "jira_wait_until": later}]
+    out = run_code(code_of(W3B, "Jira decisions").replace("$input.all()", json.dumps([{"json": d} for d in decisions])), {})
+    assert [(o["map_id"], o["gate"]["action"], o["gate"]["target"]) for o in out] == [(1, "jira-write", "reaction-1"),
+                                                                                    (2, "jira-write", "reaction-2")]
+
+
+@needs_node
+def test_w3b_jira_replies():
+    done = [{**mapped(1), "action": "bug", "actor_id": "UQA", "actor_name": "Asha", "jira_key": "PM-9", "url": "https://jira/browse/PM-9",
+             "reporter_ok": True},
+            {**mapped(2), "action": "bug", "actor_id": "UQA", "actor_name": "Asha", "jira_key": "PM-10", "url": "u", "reporter_ok": False},
+            {**mapped(3, kind="questions"), "action": "approve", "actor_id": "UQB", "actor_name": "Ravi", "jira_key": "PM-1", "url": "u2"},
+            {**mapped(4), "action": "bug", "actor_id": "UQA", "actor_name": "Asha", "jira_key": "PM-11", "url": "u3", "reporter_ok": True}]
+    code = code_of(W3B, "Jira replies").replace("$input.all()", json.dumps([{"json": {"id": i}} for i in (1, 2, 3, None)]))
+    out = run_code(code, {}, {"Jira results": done})
+    assert [o["body"] for o in out] == [
+        'Bug PM-9 filed by <@UQA>. Labelled "Filed via QA bot".',
+        'Bug PM-10 filed by <@UQA>. Jira didn\'t accept you as Reporter, so a "Filed by Asha" comment was added.',
+        "Questions added to PM-1 as a comment naming <@UQB>.",
+    ]
+    assert all(o["legend"] == "↩️ within 24 h to undo" for o in out)
+    assert W3B["connections"]["Jira results"]["main"][0][0]["node"] == "Record Jira decision"  # recorded before the reply
+    assert W3B["connections"]["Decisions"]["main"][0][0]["node"] == "Slack-only decisions"  # 🌩️ and 🙈 first
+
+
+@needs_node
+def test_bug_reporter_from_the_qa_leads_list_when_search_finds_nobody():
+    nodes = {"Reaction": {**REACTION, "actor_email": "Asha@Gate6.com".lower()},
+             "Settings": {**BUG_SETTINGS, "account_map": json.dumps({"asha@gate6.com": "acc-listed"})},
+             "Jira user": {"statusCode": 200, "body": []}, "Nightly run": {"statusCode": 404, "body": {}}, "Slack link": {}}
+    [out] = run_code(code_of(BUG, "Build bug"), {}, nodes)
+    assert out["account_id"] == "acc-listed" and out["with_reporter"]["reporter"] == {"id": "acc-listed"}
+    assert "Nightly run: unknown" in json.dumps(out["with_reporter"]["description"])
+    nodes["Settings"] = {**BUG_SETTINGS, "account_map": "{broken"}
+    assert run_code(code_of(BUG, "Build bug"), {}, nodes)[0]["account_id"] == ""

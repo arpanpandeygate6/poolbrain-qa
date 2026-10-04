@@ -195,3 +195,6 @@ CREATE TABLE IF NOT EXISTS audit.reaction_decisions (
 CREATE UNIQUE INDEX IF NOT EXISTS reaction_decisions_live ON audit.reaction_decisions (map_id) WHERE undone_at IS NULL;
 REVOKE ALL ON audit.reaction_decisions FROM PUBLIC, audit_writer;
 GRANT SELECT, INSERT, UPDATE ON audit.reaction_decisions TO audit_writer;
+-- For 🐞 (Story 6.4): the failure's flow and the drafted bug title, from W3.
+ALTER TABLE audit.message_map ADD COLUMN IF NOT EXISTS flow_id text NOT NULL DEFAULT '';
+ALTER TABLE audit.message_map ADD COLUMN IF NOT EXISTS bug_title text NOT NULL DEFAULT '';
