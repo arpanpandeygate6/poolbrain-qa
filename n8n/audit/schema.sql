@@ -150,3 +150,22 @@ GRANT SELECT, INSERT ON audit.message_map TO audit_writer;
 -- What W3 already posted for a nightly run ("s3", "test:<test_id>"), so a retry
 -- after a Slack failure never posts the same message twice.
 ALTER TABLE audit.triage_requests ADD COLUMN IF NOT EXISTS posted jsonb NOT NULL DEFAULT '[]';
+
+-- W6 questions poster (Story 6.7): each draft-cases run is handled once.
+-- state: posted (or preview while Slack isn't set up), none (no questions),
+-- invalid (the questions file broke its contract; W0 alerted).
+CREATE TABLE IF NOT EXISTS audit.w6_runs (
+    run_id     bigint PRIMARY KEY,
+    ticket     text NOT NULL DEFAULT '',
+    state      text NOT NULL CHECK (state IN ('posted', 'preview', 'none', 'invalid')),
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+REVOKE ALL ON audit.w6_runs FROM PUBLIC, audit_writer;
+GRANT SELECT, INSERT ON audit.w6_runs TO audit_writer;
+
+-- The run a mapped message came from (the draft-cases run for `questions`).
+ALTER TABLE audit.message_map ADD COLUMN IF NOT EXISTS source_run_id bigint;
+-- Posting clarification questions is a gated action too (Story 6.7).
+ALTER TABLE audit.deferred_requests DROP CONSTRAINT IF EXISTS deferred_requests_action_check;
+ALTER TABLE audit.deferred_requests ADD CONSTRAINT deferred_requests_action_check
+    CHECK (action IN ('dispatch', 'triage-post', 'questions-post', 'quarantine', 'jira-write'));

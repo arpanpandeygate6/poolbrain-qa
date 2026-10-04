@@ -1,0 +1,845 @@
+{
+  "id": "w6QuestionsPost1",
+  "name": "W6 Questions poster",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "w0ErrorHandler1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000001",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000002",
+      "name": "Run now",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000003",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d6b2c3d4-0001-4000-8000-000000000301",
+              "name": "repo",
+              "value": "arpanpandeygate6/poolbrain-qa",
+              "type": "string"
+            },
+            {
+              "id": "d6b2c3d4-0001-4000-8000-000000000302",
+              "name": "jira_url",
+              "value": "https://gatesix.atlassian.net",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000004",
+      "name": "draft-cases runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/workflows/draft-cases.yml/runs?status=completed&per_page=30&created=%3E%3D{{ new Date(Date.now() - 48 * 3600000).toISOString().slice(0, 19) }}Z",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000005",
+      "name": "Known runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Runs already handled, and runs the gate said \"not now\" to posting.\nSELECT coalesce((SELECT json_agg(run_id::text) FROM audit.w6_runs), '[]') AS handled,\n       coalesce((SELECT json_agg(target) FROM audit.deferred_requests\n                 WHERE action = 'questions-post' AND done_at IS NULL AND not_before > now()), '[]') AS waiting;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000006",
+      "name": "New runs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Finished draft-cases runs of the last 2 days not handled yet. A run whose\n// posting the gate held back is asked about again once its wait is over.\nconst list = (v) => (Array.isArray(v) ? v : JSON.parse(v || '[]'));\nconst handled = new Set(list($('Known runs').first().json.handled));\nconst waiting = new Set(list($('Known runs').first().json.waiting));\nconst repo = $('Settings').first().json.repo;\nreturn ($('draft-cases runs').first().json.workflow_runs ?? [])\n  .filter((r) => r.status === 'completed' && r.conclusion === 'success')\n  .filter((r) => !handled.has(String(r.id)) && !waiting.has(String(r.id)))\n  .map((r) => ({ json: { repo, run_id: String(r.id), name: 'questions' } }));\n"
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000007",
+      "name": "Read questions",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "ghReadArtifact01",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "repo": "={{ $json.repo }}",
+            "run_id": "={{ $json.run_id }}",
+            "name": "={{ $json.name }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "repo",
+              "displayName": "repo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000008",
+      "name": "Check questions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The questions file's contract (contracts/questions.schema.json), checked here\n// because n8n can't run the Python validator. scripts/tests/test_n8n_workflows.py\n// checks that this copy agrees with it.\nfunction problemOf(q) {\n  if (!q || typeof q !== 'object' || Array.isArray(q)) return 'not a JSON object';\n  if (Object.keys(q)[0] !== 'schema_version') return \"'schema_version' must be the first field\";\n  if (q.schema_version !== 1) return `unknown schema_version ${JSON.stringify(q.schema_version)}`;\n  const extra = Object.keys(q).filter((k) => !['schema_version', 'ticket', 'questions'].includes(k));\n  if (extra.length) return `unexpected field ${extra[0]}`;\n  if (typeof q.ticket !== 'string' || !/^[A-Z][A-Z0-9]+-[0-9]+$/.test(q.ticket)) return 'ticket must be a Jira key';\n  if (!Array.isArray(q.questions) || q.questions.length > 10) return 'questions must be a list of at most 10';\n  for (const [i, item] of q.questions.entries()) {\n    if (!item || typeof item !== 'object' || Array.isArray(item)) return `question ${i + 1} is not an object`;\n    const keys = Object.keys(item);\n    if (keys.some((k) => !['number', 'question', 'about'].includes(k))) return `question ${i + 1} has an unexpected field`;\n    if (!Number.isInteger(item.number) || item.number < 1) return `question ${i + 1}: number must be 1 or more`;\n    if (typeof item.question !== 'string' || item.question.length < 10 || item.question.length > 500) return `question ${i + 1}: question must be 10 to 500 characters`;\n    if (typeof item.about !== 'string' || item.about.length > 200) return `question ${i + 1}: about must be at most 200 characters`;\n  }\n  return '';\n}\n\nconst runs = $('New runs').all();\nreturn $input.all().map((read, i) => {\n  const run = runs[i].json;\n  if (!read.json.found) return { json: { run_id: run.run_id, state: 'none', ticket: '' } };\n  const problem = problemOf(read.json.data);\n  if (problem) return { json: { run_id: run.run_id, state: 'invalid', ticket: '', problem } };\n  const q = read.json.data;\n  return { json: { run_id: run.run_id, state: q.questions.length ? 'to-post' : 'none', ticket: q.ticket, questions: q.questions } };\n});\n"
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000009",
+      "name": "To the gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().filter((r) => r.json.state === 'to-post').map((r) => ({ json: {\n  action: 'questions-post', workflow: '', target: r.json.run_id, payload: { ticket: r.json.ticket } } }));\n"
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000010",
+      "name": "Gate",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1600,
+        -200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "gateCheck0000001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "={{ $json.action }}",
+            "workflow": "={{ $json.workflow }}",
+            "target": "={{ $json.target }}",
+            "payload": "={{ $json.payload }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "payload",
+              "displayName": "payload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000011",
+      "name": "Allowed runs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Only runs the gate allows (AI work on); the rest are asked about again later.\nconst toPost = $('Check questions').all().filter((r) => r.json.state === 'to-post');\nconst repo = $('Settings').first().json.repo;\nreturn $input.all().flatMap((answer, i) => (answer.json.allowed === true\n  ? [{ json: { ...toPost[i].json, repo, name: 'run-outcome' } }] : []));\n"
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000012",
+      "name": "Read run-outcome",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2000,
+        -200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "ghReadArtifact01",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "repo": "={{ $json.repo }}",
+            "run_id": "={{ $json.run_id }}",
+            "name": "={{ $json.name }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "repo",
+              "displayName": "repo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000013",
+      "name": "Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// S8 (EXPERIENCE.md M8), top-level, kind `questions`. Legend words copied from\n// contracts/vocabulary.json (reactions approve and undo).\nconst LEGEND = 'React: ✅ Approve (send to Jira) · ↩️ Undo within 24 h';\nconst jira = $('Settings').first().json.jira_url;\nconst allowed = $('Allowed runs').all();\nreturn $input.all().map((outcome, i) => {\n  const r = allowed[i].json;\n  const pr = outcome.json.found ? outcome.json.data.pr_url : '';\n  const links = [];\n  if (pr) links.push({ label: 'PR 1', url: pr });\n  links.push({ label: `Jira ${r.ticket}`, url: `${jira}/browse/${r.ticket}` });\n  return { json: {\n    run_id: r.run_id, ticket: r.ticket,\n    kind: '', header: `Questions about ${r.ticket} before testing`,\n    body: ['The agent found unclear acceptance criteria:',\n      ...[...r.questions].sort((a, b) => a.number - b.number).map((q) => `${q.number}. ${q.question}`)].join('\\n'),\n    todo: `react ✅ to add these to ${r.ticket} as a comment naming you. Nothing goes to Jira without ✅.`,\n    todo_label: '', links, legend: LEGEND, thread_ts: '',\n  } };\n});\n"
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000014",
+      "name": "Post",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2400,
+        -200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "todo_label": "={{ $json.todo_label }}",
+            "links": "={{ $json.links }}",
+            "legend": "={{ $json.legend }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "legend",
+              "displayName": "legend",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000015",
+      "name": "Rows to save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Every handled run gets a row: posted or preview (with its mapping when it\n// really posted), none, or invalid. A post Slack didn't take gets no row, so it\n// is tried again; it fails the run below.\nconst messages = $('Message').isExecuted ? $('Message').all().map((m) => m.json) : [];\nconst results = $('Post').isExecuted ? $('Post').all().map((p) => p.json) : [];\nconst posted = Object.fromEntries(messages.map((m, i) => [m.run_id, results[i]]));\nreturn $('Check questions').all().flatMap((r) => {\n  const c = r.json;\n  if (c.state !== 'to-post') return [{ json: { run_id: c.run_id, ticket: c.ticket, state: c.state, channel: '', ts: '' } }];\n  const p = posted[c.run_id];\n  if (!p || !(p.posted || p.preview)) return [];\n  return [{ json: { run_id: c.run_id, ticket: c.ticket, state: p.posted ? 'posted' : 'preview', channel: p.channel ?? '', ts: p.ts ?? '' } }];\n});\n"
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000016",
+      "name": "Save",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1600,
+        100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- The run is handled; a posted message is mapped (kind questions, ticket, run);\n-- the gate's posting request is done.\nWITH handled AS (\n  INSERT INTO audit.w6_runs (run_id, ticket, state) VALUES ($1::bigint, $2, $3)\n  ON CONFLICT (run_id) DO NOTHING\n  RETURNING run_id\n), mapped AS (\n  INSERT INTO audit.message_map (channel, ts, kind, ticket, source_run_id)\n  SELECT $4, $5, 'questions', $2, $1::bigint WHERE $5 <> ''\n  ON CONFLICT (channel, ts) DO NOTHING\n  RETURNING id\n), dequeued AS (\n  UPDATE audit.deferred_requests SET done_at = now()\n  WHERE action = 'questions-post' AND target = $1 AND done_at IS NULL AND $3 IN ('posted', 'preview')\n  RETURNING id\n)\nSELECT (SELECT count(*) FROM handled) AS handled;",
+        "options": {
+          "queryReplacement": "={{ [$json.run_id, $json.ticket, $json.state, $json.channel, $json.ts] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000017",
+      "name": "Audit fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        100
+      ],
+      "parameters": {
+        "jsCode": "return $('Rows to save').all().filter((r) => ['posted', 'preview'].includes(r.json.state)).map((r) => ({\n  json: { actor: 'n8n:w6-questions-poster', actor_type: 'n8n', action: `questions-${r.json.state}`,\n    target: r.json.ticket, link: `https://github.com/${$('Settings').first().json.repo}/actions/runs/${r.json.run_id}` },\n}));\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000018",
+      "name": "Write audit entry",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2000,
+        100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "d6b2c3d4-0001-4000-8000-000000000019",
+      "name": "Report problems",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Report invalid files and posts Slack didn't take through W0 (the invalid run\n// is already saved, so it is reported once).\nconst invalid = $('Check questions').all().filter((r) => r.json.state === 'invalid');\nconst failed = ($('Post').isExecuted ? $('Post').all() : []).filter((p) => !p.json.posted && !p.json.preview);\nif (invalid.length) throw new Error(`questions file of draft-cases run ${invalid[0].json.run_id} is not valid: ${invalid[0].json.problem}`);\nif (failed.length) throw new Error(`questions not posted: ${failed[0].json.error}`);\nreturn [{ json: { ok: true } }];\n"
+      },
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "draft-cases runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "draft-cases runs": {
+      "main": [
+        [
+          {
+            "node": "Known runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Known runs": {
+      "main": [
+        [
+          {
+            "node": "New runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New runs": {
+      "main": [
+        [
+          {
+            "node": "Read questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read questions": {
+      "main": [
+        [
+          {
+            "node": "Check questions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check questions": {
+      "main": [
+        [
+          {
+            "node": "To the gate",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Rows to save",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Report problems",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To the gate": {
+      "main": [
+        [
+          {
+            "node": "Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate": {
+      "main": [
+        [
+          {
+            "node": "Allowed runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed runs": {
+      "main": [
+        [
+          {
+            "node": "Read run-outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read run-outcome": {
+      "main": [
+        [
+          {
+            "node": "Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message": {
+      "main": [
+        [
+          {
+            "node": "Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rows to save": {
+      "main": [
+        [
+          {
+            "node": "Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save": {
+      "main": [
+        [
+          {
+            "node": "Audit fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit fields": {
+      "main": [
+        [
+          {
+            "node": "Write audit entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

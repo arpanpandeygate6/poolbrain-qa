@@ -520,6 +520,7 @@ docker compose run --rm --no-deps -T n8n publish:workflow --id=w1TicketWatch001
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w1FollowUp000001
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w2NightlyWatch01
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w3TriagePoster01
+docker compose run --rm --no-deps -T n8n publish:workflow --id=w6QuestionsPost1
 docker compose run --rm --no-deps -T n8n unpublish:workflow --id=readyNotice00001
 docker compose restart n8n
 ```
@@ -565,6 +566,23 @@ At most one triage per nightly run. W2 is installed but **switched off**, with W
 **Needs Slack to be real:** replies go in the failure list's thread, which exists only once Slack is set up. Until then, everything is a preview.
 
 **Checked on 4 Oct 2026:** unit tests cover every decision and both message kinds, retries that skip what was already posted, and shortened IDs. Live: a made-up open request for the real latest nightly run, "started" 61 minutes earlier, was put on the fallback. The real gate refused posting (AI off) and held it back for 15 minutes, so nothing was posted. The test data was removed.
+
+## W6 Questions poster (Story 6.7, part 1)
+
+"W6 Questions poster" (`n8n/workflows/w6-questions-poster.json`) runs every 5 minutes. For each `draft-cases` run of the last 2 days that finished successfully and hasn't been handled (`audit.w6_runs`, one row per run):
+1. it reads the run's `questions` artifact with "GitHub: read artifact";
+2. it checks it against the questions contract. n8n can't run the Python validator, so W6 has a JavaScript copy of the rules, and a test checks that both agree on 13 good and bad cases;
+   - **no file or no questions:** recorded as `none`, nothing posted;
+   - **invalid** (including an unknown `schema_version`): recorded as `invalid`, nothing posted, and the run fails so W0 reports it, once;
+3. otherwise it asks the gate (`questions-post`). While AI work is off, nothing is posted, and it asks again after 15 minutes;
+4. it posts S8 at the top level: "Questions about <KEY> before testing", "The agent found unclear acceptance criteria:", the numbered questions, "react ✅ to add these to <KEY> as a comment naming you. Nothing goes to Jira without ✅.", the links PR 1 (from the run's `run-outcome`) · Jira, and the legend "React: ✅ Approve (send to Jira) · ↩️ Undo within 24 h";
+5. it records the run as `posted` (or `preview` while Slack isn't set up), maps a really posted message in `audit.message_map` (kind `questions`, ticket, `source_run_id`) for the ✅ reaction (W3b), and writes an audit entry. A post Slack didn't take is not recorded, so it is tried again, and the run fails so W0 alerts.
+
+Each run is posted at most once. W6 is installed but **switched off** with W1 (see "Switching W1 on").
+
+**Checked on 5 Oct 2026:**
+- Unit tests: the contract copy agrees with the Python validator, plus the states, the message, the saved rows and the error report.
+- Live: W6 found the two real `draft-cases` runs (the `PM-0` tests) and recorded both as `none`, since they stopped before drafting and had no questions.
 
 ## Ready-for-QA notice (Story 5.7)
 
