@@ -1,0 +1,876 @@
+{
+  "id": "w1FollowUp000001",
+  "name": "W1 Follow-up",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "w0ErrorHandler1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000001",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000002",
+      "name": "Run now",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000003",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f6b2c3d4-0001-4000-8000-000000000301",
+              "name": "repo",
+              "value": "arpanpandeygate6/poolbrain-qa",
+              "type": "string"
+            },
+            {
+              "id": "f6b2c3d4-0001-4000-8000-000000000302",
+              "name": "jira_url",
+              "value": "https://gatesix.atlassian.net",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000004",
+      "name": "Open requests",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Requests W1 started or that are blocked waiting for their cases, and the\n-- day each workflow's \"waits until tomorrow\" notice was last posted.\nSELECT coalesce((SELECT json_agg(json_build_object(\n          'id', id, 'ticket', ticket, 'workflow', workflow, 'state', state, 'reason', reason,\n          'attempts', attempts, 'notified', notified,\n          'dispatched_at', to_char(dispatched_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')) ORDER BY id)\n        FROM audit.w1_requests WHERE state IN ('dispatched', 'blocked')), '[]') AS requests,\n       coalesce((SELECT json_object_agg(substr(name, 5), value) FROM audit.relay_state WHERE name LIKE 's11:%'), '{}') AS s11,\n       coalesce((SELECT json_object_agg(ticket, pr_url) FROM audit.w1_requests\n                 WHERE workflow = 'draft-cases' AND pr_url <> ''), '{}') AS cases_prs;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000005",
+      "name": "Dispatched",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        -400
+      ],
+      "parameters": {
+        "jsCode": "// Started requests: look for the run each one produced.\nconst open = $('Open requests').first().json;\nconst requests = Array.isArray(open.requests) ? open.requests : JSON.parse(open.requests || '[]');\nreturn requests.filter((r) => r.state === 'dispatched' && r.dispatched_at)\n  .map((r) => ({ json: { ...r, since: new Date(Date.parse(r.dispatched_at) - 120000).toISOString().slice(0, 19) + 'Z' } }));\n"
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000006",
+      "name": "List runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        -400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/workflows/{{ $json.workflow }}.yml/runs?event=workflow_dispatch&per_page=20&created=%3E%3D{{ $json.since }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000007",
+      "name": "Finished runs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        -400
+      ],
+      "parameters": {
+        "jsCode": "// The run W1 started has the title \"<workflow> <ticket>\" (run-name) and was\n// created after the start. Only finished runs have a run-outcome to read.\nconst requests = $('Dispatched').all();\nreturn $input.all().flatMap((page, i) => {\n  const r = requests[i].json;\n  const run = (page.json.workflow_runs ?? [])\n    .filter((w) => w.display_title === `${r.workflow} ${r.ticket}` && w.created_at >= r.since)\n    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];\n  return run && run.status === 'completed' ? [{ json: { request_id: r.id, run_id: run.id } }] : [];\n});\n"
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000008",
+      "name": "List outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        -400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/runs/{{ $json.run_id }}/artifacts?name=run-outcome",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000009",
+      "name": "Has outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        -400
+      ],
+      "parameters": {
+        "jsCode": "return $input.all()\n  .map((i) => (i.json.artifacts ?? []).find((a) => a.name === 'run-outcome' && !a.expired))\n  .filter(Boolean)\n  .map((a) => ({ json: { url: a.archive_download_url } }));\n"
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000010",
+      "name": "Get download link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1600,
+        -400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000011",
+      "name": "Download outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        -400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.headers.location }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000012",
+      "name": "Unzip",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        -400
+      ],
+      "parameters": {
+        "operation": "decompress",
+        "binaryPropertyName": "data",
+        "outputPrefix": "file_"
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000013",
+      "name": "Read outcome",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        -400
+      ],
+      "parameters": {
+        "operation": "fromJson",
+        "binaryPropertyName": "file_0",
+        "options": {}
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000014",
+      "name": "Waiting for cases",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Requests blocked because their cases weren't merged: are they now?\nconst open = $('Open requests').first().json;\nconst requests = Array.isArray(open.requests) ? open.requests : JSON.parse(open.requests || '[]');\nreturn requests.filter((r) => r.state === 'blocked' && r.reason === 'cases-not-merged').map((r) => ({ json: r }));\n"
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000015",
+      "name": "Cases on main?",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/contents/cases/{{ $json.ticket }}.md?ref=main",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000016",
+      "name": "Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// One decision per request that changed (Story 5.5). Records are `done` only\n// when the run's PR or run-outcome is seen; a request without one is tried\n// again, at most MAX_TRIES times. Every notice goes out once (`notified`).\nconst MAX_TRIES = 3;\nconst LOST_AFTER_MS = 20 * 60000;\nconst now = new Date();\nconst istDay = (d) => new Date(d.getTime() + 330 * 60000).toISOString().slice(0, 10);\nconst nextIstMidnight = (d) => {\n  const ist = new Date(d.getTime() + 330 * 60000);\n  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1) - 330 * 60000).toISOString();\n};\nconst list = (name) => ($(name).isExecuted ? $(name).all().map((i) => i.json) : []);\nconst open = $('Open requests').first().json;\nconst s11 = typeof open.s11 === 'string' ? JSON.parse(open.s11) : (open.s11 ?? {});\nconst casesPrs = typeof open.cases_prs === 'string' ? JSON.parse(open.cases_prs) : (open.cases_prs ?? {});\n\nconst outcomes = Object.fromEntries(list('Read outcome').map((o) => o.data).filter((o) => o && o.run_id).map((o) => [o.run_id, o]));\nconst finished = Object.fromEntries(list('Finished runs').map((f) => [f.request_id, f.run_id]));\nconst casesNow = list('Cases on main?').map((c, i) => [list('Waiting for cases')[i], c.statusCode === 200]);\n\nconst decisions = [];\nconst decide = (r, d) => decisions.push({\n  request_id: r.id, ticket: r.ticket, workflow: r.workflow, state: r.state, reason: r.reason ?? '',\n  run_id: null, pr_url: '', notice: '', notified: r.notified, enqueue: '', not_before: now.toISOString(),\n  cases_pr: casesPrs[r.ticket] ?? '', ...d,\n});\nconst retryOrFail = (r, why, runId = null) => (r.attempts < MAX_TRIES\n  ? decide(r, { state: 'deferred', reason: why, run_id: runId, enqueue: 'retry' })\n  : decide(r, { state: 'failed', reason: why, run_id: runId, notice: 'S10',\n    notified: `failed:${why}` }));\n\nconst pages = list('List runs');\nlist('Dispatched').forEach((r, i) => {\n  const runId = finished[r.id];\n  if (!runId) {\n    // Still running: wait. No run with its title 20 minutes after the start: lost, start it again.\n    const runs = pages[i]?.workflow_runs ?? [];\n    const anyRun = runs.some((w) => w.display_title === `${r.workflow} ${r.ticket}` && w.created_at >= r.since);\n    if (!anyRun && now - Date.parse(r.dispatched_at) > LOST_AFTER_MS) retryOrFail(r, 'run-not-found');\n    return;\n  }\n  const o = outcomes[runId];\n  if (!o) { retryOrFail(r, 'no-run-outcome', runId); return; }\n  if (o.status === 'ok') {\n    const notice = o.pr_url && r.notified !== o.pr_url ? (r.workflow === 'draft-cases' ? 'S7' : 'S9') : '';\n    decide(r, { state: 'done', reason: o.reason ?? '', run_id: runId, pr_url: o.pr_url ?? '', notice,\n      notified: o.pr_url || r.notified });\n  } else if (o.status === 'blocked' && o.reason === 'cases-already-on-main') {\n    decide(r, { state: 'done', reason: o.reason, run_id: runId });\n  } else if (o.status === 'blocked') {\n    const key = `blocked:${o.reason}`;\n    decide(r, { state: 'blocked', reason: o.reason, run_id: runId, notice: r.notified === key ? '' : 'S10', notified: key });\n  } else if (o.status === 'capped') {\n    const today = istDay(now);\n    decide(r, { state: 'deferred', reason: 'capped', run_id: runId, enqueue: 'capped', not_before: nextIstMidnight(now),\n      notice: s11[r.workflow] === today ? '' : 'S11', s11_day: today });\n  } else if (o.status === 'disabled') {\n    decide(r, { state: 'deferred', reason: 'disabled', run_id: runId, enqueue: 'disabled' });\n  } else {\n    retryOrFail(r, o.reason || 'error', runId);\n  }\n});\n\n// Blocked until the cases were merged: once they are, start it again.\nfor (const [r, merged] of casesNow) {\n  if (merged) decide(r, { state: 'deferred', reason: 'cases-merged', enqueue: 'retry' });\n}\n\n// One S11 per workflow per day, even when several runs ended capped.\nconst s11Sent = new Set();\nfor (const d of decisions) {\n  if (d.notice === 'S11') {\n    if (s11Sent.has(d.workflow)) d.notice = '';\n    s11Sent.add(d.workflow);\n  }\n}\nreturn decisions.map((d) => ({ json: d }));\n"
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000017",
+      "name": "Notices",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Only decisions that post a notice; their case file gives the flows.\nreturn $input.all().filter((d) => d.json.notice).map((d) => ({ json: { ...d.json,\n  case_ref: d.json.notice === 'S7' ? `agent/${d.json.ticket}-cases` : 'main' } }));\n"
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000018",
+      "name": "Case file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/contents/cases/{{ $json.ticket }}.md?ref={{ $json.case_ref }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000019",
+      "name": "Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// S7, S9, S10 and S11 (EXPERIENCE.md M7, M9, M10, M11).\nconst settings = $('Settings').first().json;\nconst repo = `https://github.com/${settings.repo}`;\nconst jiraLink = (key) => ({ label: `Jira ${key}`, url: `${settings.jira_url}/browse/${key}` });\nconst flowsOf = (file) => {\n  if (file.statusCode !== 200 || !file.body?.content) return [];\n  const text = atob(file.body.content.replace(/\\s/g, ''));\n  const match = text.match(/^flows:\\s*\\[([^\\]]*)\\]/m);\n  return match ? match[1].split(',').map((f) => f.trim()).filter(Boolean) : [];\n};\nconst code = (items) => items.map((f) => `\\`${f}\\``).join(', ');\nconst WORK = { 'draft-cases': 'Case drafting', 'generate-tests': 'Test generation' };\nconst PLAIN = {\n  'cases-not-merged': ['its cases PR is not merged on `main`', 'review and merge PR 1. This retries on its own after that.'],\n  'no-matching-flow': ['no flow in the flow list fits this ticket', 'choose a flow, or ask the QA lead to add one, then start draft-cases again.'],\n  'no-acceptance-criteria': ['the ticket has no acceptance criteria', 'add acceptance criteria to the ticket, then start draft-cases again.'],\n  'cannot-automate': ['a case can\\'t be tested with the existing helpers', 'adjust the case file, or write that test by hand.'],\n  'case-file-unusable': ['the case file can\\'t be used as it is', 'fix the case file in a PR, then start generate-tests again.'],\n};\nconst S11_WORK = {\n  'draft-cases': ['Case drafting', 'case drafts', (t) => `${t} will be drafted after 00:00 IST.`, 'run /draft-cases in Claude Code on a laptop, or ask the QA lead to change the limit.'],\n  'generate-tests': ['Test generation', 'test generations', (t) => `Tests for ${t} will be generated after 00:00 IST.`, 'run /generate-api-tests in Claude Code on a laptop, or ask the QA lead to change the limit.'],\n};\n\nconst notices = $('Notices').all();\nreturn $input.all().map((file, i) => {\n  const d = notices[i].json;\n  const flows = flowsOf(file.json);\n  let m;\n  if (d.notice === 'S7') {\n    m = { kind: '', header: `Test cases drafted for ${d.ticket}`,\n      body: `The agent drafted cases from the acceptance criteria.${flows.length ? ` Flows: ${code(flows)}.` : ''}`,\n      todo: 'review and edit PR 1, then merge it to accept the cases.',\n      links: [{ label: 'PR 1', url: d.pr_url }, jiraLink(d.ticket),\n        { label: 'Case file', url: `${repo}/blob/${d.case_ref}/cases/${d.ticket}.md` }] };\n  } else if (d.notice === 'S9') {\n    m = { kind: '', header: `Tests generated for ${d.ticket}`,\n      body: `PR 2 adds API tests with SQL checks${flows.length ? ` for flow ${code(flows)}` : ''}.`,\n      todo: 'review every line, approve, then start `uat-pr` with the reviewed commit SHA.',\n      links: [{ label: 'PR 2', url: d.pr_url }, { label: 'Run workflow: uat-pr', url: `${repo}/actions/workflows/uat-pr.yml` },\n        jiraLink(d.ticket)] };\n  } else if (d.notice === 'S11') {\n    const [work, units, later, urgent] = S11_WORK[d.workflow];\n    m = { kind: 'info', header: `${work} waits until tomorrow`,\n      body: `The agent's own check found today's limit of ${units} reached (counted since 00:00 IST).\\n${later(d.ticket)}`,\n      todo: urgent, todo_label: 'If urgent', links: [jiraLink(d.ticket)] };\n  } else {\n    const failed = d.state === 'failed';\n    const [why, todo] = PLAIN[d.reason] ?? [failed ? `it failed ${3} times` : 'the agent stopped', failed\n      ? `look at the last run, or run ${d.workflow === 'draft-cases' ? '/draft-cases' : '/generate-api-tests'} ${d.ticket} on a laptop.`\n      : 'look at the run, then start it again.'];\n    const header = d.reason === 'cases-not-merged'\n      ? `tests for ${d.ticket} can't be generated yet`\n      : `${WORK[d.workflow]} for ${d.ticket} ${failed ? 'failed' : 'stopped'}`;\n    const links = [];\n    if (d.reason === 'cases-not-merged' && d.cases_pr) links.push({ label: 'PR 1', url: d.cases_pr });\n    if (d.run_id) links.push({ label: 'Run', url: `${repo}/actions/runs/${d.run_id}` });\n    links.push(jiraLink(d.ticket));\n    m = { kind: 'action', header, body: `Reason: ${why} (\\`${d.reason}\\`).`, todo, links };\n  }\n  return { json: { todo_label: '', thread_ts: '', ...m } };\n});\n"
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000020",
+      "name": "Post notice",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1400,
+        0
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "todo_label": "={{ $json.todo_label }}",
+            "links": "={{ $json.links }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000021",
+      "name": "Posted?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// A notice Slack didn't take fails the run (W0 alerts); nothing is saved, so\n// it is tried again on the next run.\nfor (const r of $input.all()) {\n  if (!r.json.posted && !r.json.preview) throw new Error(`W1 notice not posted: ${r.json.error}`);\n}\nreturn [{ json: { notices: $input.all().length } }];\n"
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000022",
+      "name": "Save",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        800,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Save the decision; put a retry or a capped/disabled run back on the waiting\n-- list with its masked text; remember the S11 day.\nWITH saved AS (\n  UPDATE audit.w1_requests\n  SET state = $2, reason = $3, run_id = coalesce(nullif($4, '')::bigint, run_id),\n      pr_url = CASE WHEN $5 <> '' THEN $5 ELSE pr_url END, notified = $6, updated_at = now()\n  WHERE id = $1::bigint\n  RETURNING ticket, workflow, ticket_text\n), queued AS (\n  INSERT INTO audit.deferred_requests (action, workflow, target, payload, reason, not_before)\n  SELECT 'dispatch', workflow, ticket, json_build_object('ticket', ticket, 'ticket_text', ticket_text)::jsonb, $7, $8::timestamptz\n  FROM saved WHERE $7 <> ''\n  ON CONFLICT (action, workflow, target) WHERE done_at IS NULL\n  DO UPDATE SET reason = excluded.reason, not_before = excluded.not_before, payload = excluded.payload\n  RETURNING id\n), s11 AS (\n  INSERT INTO audit.relay_state (name, value)\n  SELECT 's11:' || workflow, $9 FROM saved WHERE $9 <> ''\n  ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = now()\n  RETURNING name\n)\nSELECT (SELECT count(*) FROM saved) AS saved, (SELECT count(*) FROM queued) AS queued;",
+        "options": {
+          "queryReplacement": "={{ [$json.request_id, $json.state, $json.reason, String($json.run_id ?? ''), $json.pr_url, $json.notified, $json.enqueue, $json.not_before, $json.notice === 'S11' ? $json.s11_day : ''] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000023",
+      "name": "Audit fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// One audit entry per decision.\nreturn $('Decide').all().map((d) => ({\n  json: {\n    actor: 'n8n:w1-follow-up',\n    actor_type: 'n8n',\n    action: `follow-up-${d.json.state}${d.json.notice ? `-${d.json.notice.toLowerCase()}` : ''}`,\n    target: `${d.json.workflow} ${d.json.ticket}${d.json.reason ? ` (${d.json.reason})` : ''}`,\n    link: d.json.pr_url || (d.json.run_id ? `https://github.com/${$('Settings').first().json.repo}/actions/runs/${d.json.run_id}` : ''),\n  },\n}));\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "f6b2c3d4-0001-4000-8000-000000000024",
+      "name": "Write audit entry",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Open requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open requests": {
+      "main": [
+        [
+          {
+            "node": "Dispatched",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Waiting for cases",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Decide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatched": {
+      "main": [
+        [
+          {
+            "node": "List runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List runs": {
+      "main": [
+        [
+          {
+            "node": "Finished runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finished runs": {
+      "main": [
+        [
+          {
+            "node": "List outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List outcome": {
+      "main": [
+        [
+          {
+            "node": "Has outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has outcome": {
+      "main": [
+        [
+          {
+            "node": "Get download link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get download link": {
+      "main": [
+        [
+          {
+            "node": "Download outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download outcome": {
+      "main": [
+        [
+          {
+            "node": "Unzip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unzip": {
+      "main": [
+        [
+          {
+            "node": "Read outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Waiting for cases": {
+      "main": [
+        [
+          {
+            "node": "Cases on main?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide": {
+      "main": [
+        [
+          {
+            "node": "Notices",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notices": {
+      "main": [
+        [
+          {
+            "node": "Case file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Case file": {
+      "main": [
+        [
+          {
+            "node": "Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message": {
+      "main": [
+        [
+          {
+            "node": "Post notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post notice": {
+      "main": [
+        [
+          {
+            "node": "Posted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save": {
+      "main": [
+        [
+          {
+            "node": "Audit fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit fields": {
+      "main": [
+        [
+          {
+            "node": "Write audit entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

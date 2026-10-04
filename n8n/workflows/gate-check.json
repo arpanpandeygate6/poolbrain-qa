@@ -431,7 +431,7 @@
         200
       ],
       "parameters": {
-        "jsCode": "// AI work is off: keep the request so it runs once it is back on.\nreturn [{ json: { reason: 'disabled', not_before: new Date().toISOString(), audit_action: 'gate-skipped-disabled' } }];\n"
+        "jsCode": "// AI work is off: keep the request so it runs once it is back on. It is asked\n// about again after 15 minutes, not on every 5-minute poll, which keeps the\n// audit log readable while AI work stays off.\nreturn [{ json: { reason: 'disabled', not_before: new Date(Date.now() + 15 * 60000).toISOString(),\n  audit_action: 'gate-skipped-disabled' } }];\n"
       }
     },
     {
