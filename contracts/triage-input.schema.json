@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "triage-input",
+  "title": "triage-input",
+  "description": "The only text the triage model may see (Story 6.1, SEC-05, AD-13): per failure, masked error messages, stack traces and failed step names, built by scripts/sanitize.py in the nightly report job. Never screenshots, traces, videos or raw logs. Consumer: the triage workflow (Story 6.2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "nightly_run_id",
+    "failures"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "nightly_run_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "failures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "test_id",
+          "flow_id",
+          "suite",
+          "attempts",
+          "history",
+          "status",
+          "flaky_candidate",
+          "message",
+          "trace",
+          "failed_steps"
+        ],
+        "properties": {
+          "test_id": {
+            "type": "string",
+            "pattern": "^(api:[^\\s]+::.+|ui:.+ > .+)$"
+          },
+          "flow_id": {
+            "type": "string",
+            "pattern": "^([a-z0-9]+(-[a-z0-9]+)*)?$",
+            "description": "Empty when the test's flow is unknown."
+          },
+          "suite": {
+            "enum": [
+              "API",
+              "UI"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "history": {
+            "type": "array",
+            "maxItems": 7,
+            "description": "The last 7 nights before this one, newest first. Fewer when fewer earlier runs exist.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "nightly_run_id",
+                "result"
+              ],
+              "properties": {
+                "nightly_run_id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "result": {
+                  "enum": [
+                    "passed",
+                    "failed",
+                    "passed-on-retry",
+                    "quarantined",
+                    "not-run"
+                  ]
+                }
+              }
+            }
+          },
+          "status": {
+            "enum": [
+              "failed",
+              "quarantined",
+              "passed-on-retry"
+            ]
+          },
+          "flaky_candidate": {
+            "type": "boolean",
+            "description": "True for tests that passed on retry."
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "The error message of the last failed attempt, masked."
+          },
+          "trace": {
+            "type": "string",
+            "maxLength": 4000,
+            "description": "Its stack trace, masked and cut to the first 4000 characters."
+          },
+          "failed_steps": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "description": "Names of the steps that failed, outermost first, masked."
+          }
+        }
+      }
+    }
+  }
+}

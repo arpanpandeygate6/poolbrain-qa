@@ -313,6 +313,17 @@ After the tests, the nightly's separate **Failure list** job builds the plain li
 3. Put the bot token where only `main` can use it: in the `notify` Environment on a plan with Environments. On GitHub Free, the team decides; it must never be a repository secret without that decision being recorded here.
 4. Add `environment: notify` and `SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}` to the "Build the failure list" step's job.
 
+## Sanitizer and triage-input (Story 6.1)
+
+After the failure list, the nightly's **Failure list** job builds `triage-input`, the only text the triage AI may ever see.
+
+- **What it keeps:** for each failed, quarantined or passed-on-retry test, the error message, stack trace and failed step names of its last failed attempt, plus its flow, attempts, last 7 nights and whether it is a flaky candidate. These come from the Allure `*-result.json` files in the test output. Screenshots, traces, videos, attachments and raw logs are never read.
+- **Masking:** every text is masked with `scripts/masking-patterns.json` before it is cut to size (message 2,000 characters, trace 4,000, at most 10 steps). The patterns cover private keys, JWTs, known token formats (Slack, GitHub, Stripe, AWS, Google, Anthropic), auth headers, `password=` / `token:` style values, passwords in URLs, emails, street addresses, card-like numbers, phone numbers and long hex keys. They are applied in the order listed.
+- **Saved file:** the artifact `triage-input` (30 days), checked against `contracts/triage-input.schema.json`. If the check fails, the "Sanitize failures into triage-input" step fails and nothing is saved; the test result and the gate are unchanged. When nothing failed, nothing is saved.
+
+**Changing the patterns.** Edit `scripts/masking-patterns.json`. Each pattern needs `examples` (text it must mask) and a fixture in `scripts/tests/test_sanitize.py`; a pattern without one fails `ci`. Use only regex features that Python and JavaScript share (no named groups, no lookbehind, plain-text replacements): a test checks that both mask every example the same way. n8n W1 (Story 5.5) will keep a copy pinned by its SHA-256 hash, and `ci` (`scripts/check_masking_hash.py`) fails if the pinned hash differs from the file, so update the n8n copy in the same PR.
+
+**Checked on 4 Oct 2026:** a local rehearsal ran a temporary failing pytest test whose message, stack trace and step names held a fake email, street address, card number and bearer token. Its real Allure output went through `run_summary.py` and `sanitize.py`. Every value came out masked, the file passed its contract, and test names, line numbers and short commit IDs were kept.
 ## Contracts (AD-5)
 
 `contracts/` holds the schema for every file handed between components (`<name>.schema.json`), a sample of each in `contracts/samples/`, and the shared vocabulary.

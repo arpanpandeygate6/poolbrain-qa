@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "_about": "The one set of masking patterns (AD-13, SEC-05). Applied in this order by scripts/sanitize.py (Python) and by the copy pinned in n8n W1 (JavaScript), so patterns use only regex syntax both understand: no named groups, no lookbehind, no backreferences in replacements. flags may be 'i'. Every pattern needs examples (text that must be masked); keeps lists text that must survive. Changing this file changes its hash: update the n8n copy in the same PR (scripts/check_masking_hash.py).",
+  "patterns": [
+    {
+      "name": "private-key",
+      "pattern": "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----",
+      "flags": "",
+      "replacement": "[private key]",
+      "examples": ["-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAfake\n-----END RSA PRIVATE KEY-----"]
+    },
+    {
+      "name": "jwt",
+      "pattern": "\\beyJ[\\w-]{10,}\\.[\\w-]{10,}\\.[\\w-]{10,}",
+      "flags": "",
+      "replacement": "[token]",
+      "examples": ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"]
+    },
+    {
+      "name": "known-token",
+      "pattern": "\\b(?:xox[abposr]-[\\w-]{10,}|gh[pousr]_\\w{20,}|github_pat_\\w{20,}|sk-[\\w-]{20,}|[spr]k_(?:live|test)_\\w{10,}|AKIA[0-9A-Z]{16}|AIza[\\w-]{35})",
+      "flags": "",
+      "replacement": "[token]",
+      "examples": [
+        "xoxb-123456789012-abcdefghijkl",
+        "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345",
+        "github_pat_11ABCDEFG0123456789_abcdefghij",
+        "sk_live_51HfakeFAKEfake",
+        "AKIAIOSFODNN7EXAMPLE",
+        "sk-ant-api03-FAKEfakeFAKEfake12345"
+      ]
+    },
+    {
+      "name": "auth-header",
+      "pattern": "\\b(?:bearer|basic|token)\\s+[\\w.~+/=-]{8,}",
+      "flags": "i",
+      "replacement": "[auth hidden]",
+      "examples": ["Authorization: Bearer abc.def-ghi_jkl", "Authorization: Basic dXNlcjpwYXNzd29yZA=="],
+      "keeps": ["the token was refused"]
+    },
+    {
+      "name": "secret-value",
+      "pattern": "\\b(?:password|passwd|pwd|secret|client[_-]?secret|api[_-]?key|access[_-]?token|refresh[_-]?token|token|otp)\\b[\"']?\\s*[=:]\\s*[\"']?[^\\s\"',;&)}\\[]+",
+      "flags": "i",
+      "replacement": "[secret hidden]",
+      "examples": ["password=Hunter2!", "{\"api_key\": \"abc123def\"}", "?access_token=zzz999&page=2", "OTP: 482913"],
+      "keeps": ["password field is empty", "test_reset_password_link", "token = \"[auth hidden]\""]
+    },
+    {
+      "name": "url-credentials",
+      "pattern": "//[^/\\s:@]+:[^/\\s@]+@",
+      "flags": "",
+      "replacement": "//[hidden]@",
+      "examples": ["mysql://qa_readonly:s3cret@db.internal:3306/poolbrain"]
+    },
+    {
+      "name": "email",
+      "pattern": "[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}",
+      "flags": "",
+      "replacement": "[email]",
+      "examples": ["jane.doe+pool@example.com", "Expected owner@acme-pools.co.uk to be shown"]
+    },
+    {
+      "name": "street-address",
+      "pattern": "\\b\\d{1,6}\\s+(?:[A-Z][A-Za-z]*\\.?\\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl|Terrace|Ter|Circle|Cir|Parkway|Pkwy|Highway|Hwy|Trail|Trl)\\b\\.?",
+      "flags": "",
+      "replacement": "[address]",
+      "examples": ["1234 Palm Beach Blvd", "Service at 77 N. Ocean Dr. today", "5 Elm St"],
+      "keeps": ["Expected 3 Jobs but found 2", "line 120 Step"]
+    },
+    {
+      "name": "card-like-number",
+      "pattern": "\\b(?:\\d[ -]?){12,18}\\d\\b",
+      "flags": "",
+      "replacement": "[card number]",
+      "examples": ["4242 4242 4242 4242", "4111-1111-1111-1111", "5555555555554444"],
+      "keeps": ["expected 200 but got 500", "job 104233 not found"]
+    },
+    {
+      "name": "phone-number",
+      "pattern": "(?:\\+?1[ .-]?)?\\(?\\b\\d{3}\\)?[ .-]\\d{3}[ .-]\\d{4}\\b",
+      "flags": "",
+      "replacement": "[phone]",
+      "examples": ["(561) 555-0142", "+1 561-555-0142", "561.555.0142"],
+      "keeps": ["at line 123"]
+    },
+    {
+      "name": "long-hex-secret",
+      "pattern": "\\b[A-Fa-f0-9]{32,}\\b",
+      "flags": "",
+      "replacement": "[hidden]",
+      "examples": ["session 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"],
+      "keeps": ["commit 5b4a364"]
+    }
+  ]
+}
