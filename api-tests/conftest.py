@@ -33,14 +33,17 @@ def pytest_collection_modifyitems(config, items):
 def api(settings) -> ApiClient:
     if not settings.api_base_url:
         pytest.skip(f"API_BASE_URL is not set for {settings.env}")
-    client = ApiClient(settings.api_base_url, settings.api_token)
+    client = ApiClient(settings.api_base_url, settings.api_token, read_only=settings.read_only, env=settings.env)
     yield client
     client.close()
 
 
 @pytest.fixture(scope="session")
 def logged_in_api(api, settings) -> ApiClient:
-    """The API client, logged in as the role test account."""
+    """The API client, authenticated: with the API key when API_TOKEN is set,
+    otherwise logged in as the role (or testing-company) user."""
+    if settings.auth_mode == "api-key":
+        return api
     if not (settings.api_user_email and settings.api_user_password):
         pytest.skip(f"API_USER_EMAIL and API_USER_PASSWORD are not set for {settings.env}")
     response = api.login(settings.api_user_email, settings.api_user_password)

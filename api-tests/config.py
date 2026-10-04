@@ -40,10 +40,23 @@ class Settings:
     db_name: str
     db_user: str
     db_password: str
+    testing_company_id: str = ""
 
     @property
     def read_only(self) -> bool:
         return self.env in READ_ONLY_ENVIRONMENTS
+
+    @property
+    def auth_mode(self) -> str:
+        """How tests log in, chosen by which variables are set (Story 3.1): a
+        testing-company API key (API_TOKEN), or, until such keys exist, the
+        testing-company user (API_USER_EMAIL and API_USER_PASSWORD), without OTP
+        bypass on Preprod, PROD and NPP. 'none' when neither is set."""
+        if self.api_token:
+            return "api-key"
+        if self.api_user_email and self.api_user_password:
+            return "login"
+        return "none"
 
 
 def load_settings(env: str | None = None) -> Settings:
@@ -70,4 +83,5 @@ def load_settings(env: str | None = None) -> Settings:
         db_name=os.getenv("DB_NAME", ""),
         db_user=os.getenv("DB_USER", ""),
         db_password=os.getenv("DB_PASSWORD", ""),
+        testing_company_id=os.getenv("TESTING_COMPANY_ID", ""),
     )

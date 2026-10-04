@@ -415,6 +415,28 @@ Turns a quarantine request into a PR that adds one entry to `flows/quarantine.ya
 - the nightly's own reader seeing the test as quarantined after the change;
 - that the workflow commits only `flows/quarantine.yaml` and calls no model.
 
+## Smoke: read-only release checks (Stories 3.1 and 3.2)
+
+**Smoke tests** live in `api-tests/tests/test_smoke.py`, marked `smoke` and with a flow tag. They **only read**, and **only the testing company's data**:
+- On Preprod, PROD and NPP, `ApiClient` refuses every call except reads and the login (`SAFE_METHODS`, `SAFE_CALLS` in `utils/api_client.py`), **before any network call**: "POST jobs refused: prod is read-only (smoke tests may only read). Nothing was sent." Another safe call is added only when the release owner agrees, with the reason.
+- Each smoke test checks what it read with `assert_testing_company` (`utils/testing_company.py`) against `TESTING_COMPANY_ID`. That ID is required on Preprod, PROD and NPP, and the test fails without it; on UAT and the pretend site the check is skipped when it's empty.
+- How tests log in is chosen by which variables are set (`Settings.auth_mode`): a testing-company **API key** (`API_TOKEN`), or, until such keys exist, the **testing-company user** (`API_USER_EMAIL`, `API_USER_PASSWORD`), without OTP bypass. Preprod, PROD and NPP still run only in CI (`CI=true`); on a laptop they are refused.
+
+**Porting Postman (Story 3.1):** `api-tests/postman-mapping.md` lists every Postman release-gate request and the test that replaces it, with the porting rules. **It is empty until the collection arrives.** The one check today, "the customer list answers and holds only the testing company's customers", isn't from Postman.
+
+**One button (Story 3.2):** **Actions → smoke → Run workflow** (`.github/workflows/smoke.yml`), choosing `all`, `uat`, `preprod`, `prod` or `npp` ("read-only, testing company only"):
+- one job per environment, 10 minutes each, where one failure doesn't stop the others; each runs only `pytest -m smoke` with `CI=true` and `POOLBRAIN_ENV`;
+- each job's summary: "## smoke — PASSED" or "FAILED", the environment, commit, who started it, the IST time, a table of **every check** with PASSED or FAILED (`run_summary.py --every-check`), and the Allure link. A run cut off at 9 minutes says "FAILED: timed out after 10 minutes.";
+- runs only from `main`;
+- **UAT** runs against the pretend PoolBrain until there is UAT access.
+
+**Preprod, PROD and NPP credentials (GitHub Free):** the plan is a `prod-smoke` Environment restricted to `main` (and `uat-nightly` for UAT). Free has no Environments for private repositories, so until the team decides where they live, those jobs end "## smoke — NOT RUN" with the names they need: `<ENV>_API_BASE_URL`, `<ENV>_TESTING_COMPANY_ID`, and `<ENV>_API_TOKEN` or `<ENV>_API_USER_EMAIL` plus `<ENV>_API_USER_PASSWORD` (for example `PROD_API_BASE_URL`). On a plan with Environments, create `prod-smoke` (deployment branch: `main` only), put the credentials there, and uncomment the `environment:` line in `smoke.yml`. **Owner: the QA lead; rotate the credentials every 90 days** (record the next date here).
+
+**Checked on 5 Oct 2026:**
+- Unit tests (`api-tests/unit/test_smoke_helpers.py`): writes refused on PROD with nothing sent, reads and the login allowed, the login choice, PROD refused outside CI, and the testing-company check.
+- Against the pretend PoolBrain: the smoke test passed as UAT, and the whole API suite still passed. As `prod` in CI mode, the non-smoke tests were skipped, the smoke test failed because `TESTING_COMPANY_ID` was missing, and creating a job was refused before anything was sent.
+- The workflow itself first runs after this is merged: try **Run workflow → uat**, then **all** (Preprod, PROD and NPP should say "NOT RUN").
+
 ## Kill switch and daily limits (Story 5.6)
 
 **Turning AI work off and on.** In GitHub: **Settings → Secrets and variables → Actions → Variables**, the repository variable `AGENT_ENABLED`. Only the exact value `true` lets AI work run. `false`, any other value, or no variable at all counts as off. Only people change it (the QA lead or n8n maintainer), never a workflow.
