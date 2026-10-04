@@ -349,6 +349,25 @@ The flaky rate is the tests that failed and then passed on retry, divided by all
 
 **Checked on 4 Oct 2026:** the message rules are covered by unit tests (failed and passed nights, flaky rate above and below 2%, cutting long lists, no result, AI off). A live run in n8n read GitHub, found no scheduled nightly yet (the 02:30 IST schedule had not run from `main` yet), and correctly previewed "Nightly run: no result found for last night." with the AI-off line, and wrote its audit entry. The first update with real numbers is the morning after the first scheduled nightly that has this story's `nightly-summary` step.
 
+## Weekly audit log W7 (Story 7.2)
+
+"W7 Weekly audit log" (`n8n/workflows/w7-weekly-audit.json`) runs every Monday at 04:00 UTC (09:30 IST) and needs no access to the n8n server:
+1. It takes the audit entries of the **last full week**, Monday 00:00 to Monday 00:00 UTC. Running it again in the same week gives the same file. Its own entry is written at run time, so it falls in the next week and is never counted twice.
+2. It writes `audit-<last day of the week>.csv` following `contracts/audit-export.schema.json`:
+   - a header row with the columns `ts, actor, actor_type, action, target, link`, in that order;
+   - UTC times;
+   - standard CSV quoting: a value with a comma, quote or line break is quoted, with quotes doubled;
+   - CRLF line ends, oldest entry first.
+   A week with no entries gives a header-only file.
+3. It uploads the file to the QA channel (Slack's `files.getUploadURLExternal`, then sending the file, then `files.completeUploadExternal`). The message is "Weekly audit log: <date range>", one line about the file (or "No entries were recorded this week. The file has only the header row."), and "Columns: ts, actor, actor_type, action, target, link. Times in the file are UTC."
+4. It writes its own audit entry (`n8n:w7-weekly-audit`, `weekly-audit-posted` or `weekly-audit-preview`). It runs whatever `AGENT_ENABLED` says.
+
+If Slack refuses or can't be reached, the run fails and W0 alerts; run it again by hand (**Run now**) in the same week to post the same file. Until Slack is set up, nothing is uploaded: the message and the whole CSV are in the execution in n8n as a preview. The upload also needs the Slack app's `files:write` scope (already in the manifest), and `n8n/slack-setup.sh` puts the channel into W7 as well as the post sub-workflow.
+
+**Checking a CSV by hand:** `python scripts/validate_contract.py audit-export audit-2026-10-04.csv`. `scripts/validate_contract.py` now checks CSV contracts (schemas with `x-csv-columns`) row by row.
+
+**Checked on 4 Oct 2026:** a live run took the week 21–27 Sep, which was empty because the audit log started on 1 Oct, and previewed a header-only `audit-2026-09-27.csv` with the "no entries" line, then wrote its audit entry. W7's CSV code was also run on the 134 real entries of 28 Sep–4 Oct (9 different actors), and the file passed the contract check.
+
 ## Ready-for-QA notice (Story 5.7)
 
 The n8n workflow "Ready-for-QA notice" (`n8n/workflows/ready-for-qa-notice.json`) is the early n8n demo: Jira, GitHub and Slack working together. It only reads Jira and GitHub; it never writes to Jira or starts a GitHub workflow.

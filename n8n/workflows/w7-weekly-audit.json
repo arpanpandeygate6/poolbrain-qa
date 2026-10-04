@@ -1,0 +1,513 @@
+{
+  "id": "w7WeeklyAudit001",
+  "name": "W7 Weekly audit log",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "w0ErrorHandler1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000001",
+      "name": "Every Monday 04:00 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * 1"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000002",
+      "name": "Run now",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000003",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d7b2c3d4-0001-4000-8000-000000000301",
+              "name": "slack_channel",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000004",
+      "name": "Last week's entries",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- The last full week, Monday 00:00 to Monday 00:00 UTC, before now. A re-run\n-- in the same week gives the same rows, and W7's own entry (written now)\n-- falls in the next week, so nothing is counted twice.\nWITH week AS (\n  SELECT date_trunc('week', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' - interval '7 days' AS start_at,\n         date_trunc('week', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS end_at\n)\nSELECT to_char(week.start_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS week_start,\n       to_char((week.end_at - interval '1 day') AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS week_end,\n       coalesce((\n         SELECT json_agg(json_build_object(\n                  'ts', to_char(a.ts AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\n                  'actor', a.actor, 'actor_type', a.actor_type, 'action', a.action,\n                  'target', a.target, 'link', a.link) ORDER BY a.ts, a.id)\n         FROM audit.audit_log a\n         WHERE a.ts >= week.start_at AND a.ts < week.end_at), '[]') AS entries\nFROM week;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000005",
+      "name": "Build file",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The CSV (contracts/audit-export.schema.json): header row, columns in this\n// order, standard quoting, CRLF line ends, oldest entry first. And the S14\n// message (EXPERIENCE.md M14).\nconst COLUMNS = ['ts', 'actor', 'actor_type', 'action', 'target', 'link'];\nconst quote = (value) => {\n  const text = String(value ?? '');\n  return /[\",\\r\\n]/.test(text) ? `\"${text.replace(/\"/g, '\"\"')}\"` : text;\n};\n\nconst week = $input.first().json;\nconst entries = Array.isArray(week.entries) ? week.entries : JSON.parse(week.entries || '[]');\nconst csv = [COLUMNS.join(','), ...entries.map((e) => COLUMNS.map((c) => quote(e[c])).join(','))]\n  .map((line) => `${line}\\r\\n`).join('');\n\n// \"29 Sep–5 Oct\", or \"24–30 Sep\" within one month\nconst day = (ymd) => {\n  const [y, m, d] = ymd.split('-').map(Number);\n  return { d, month: new Date(Date.UTC(y, m - 1, d)).toLocaleString('en-US', { month: 'short', timeZone: 'UTC' }) };\n};\nconst s = day(week.week_start);\nconst e = day(week.week_end);\nconst range = s.month === e.month ? `${s.d}–${e.d} ${e.month}` : `${s.d} ${s.month}–${e.d} ${e.month}`;\n\nconst describe = entries.length\n  ? `The file lists every agent run, n8n action and QA decision this week (${entries.length} ${entries.length === 1 ? 'entry' : 'entries'}).`\n  : 'No entries were recorded this week. The file has only the header row.';\nconst header = `Weekly audit log: ${range}`;\nconst comment = `*${header}*\\n${describe}\\nColumns: ${COLUMNS.join(', ')}. Times in the file are UTC.`;\n\nreturn [{\n  json: {\n    filename: `audit-${week.week_end}.csv`,\n    csv,\n    bytes: new TextEncoder().encode(csv).length,\n    entries: entries.length,\n    week_start: week.week_start,\n    week_end: week.week_end,\n    header,\n    comment,\n    channel: $('Settings').first().json.slack_channel ?? '',\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000006",
+      "name": "Slack set up?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d7b2c3d4-0001-4000-8000-000000000601",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000007",
+      "name": "Get upload address",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/files.getUploadURLExternal",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "options": {},
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filename",
+              "value": "={{ $json.filename }}"
+            },
+            {
+              "name": "length",
+              "value": "={{ $json.bytes }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000008",
+      "name": "Address given?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// Slack answers 200 even when it refuses, with ok: false: fail so W0 alerts.\nconst r = $input.first().json;\nif (!r.ok) throw new Error(`Slack refused the audit file upload: ${r.error}`);\nreturn [{ json: r }];\n"
+      }
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000009",
+      "name": "Send file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.upload_url }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/csv",
+        "body": "={{ $('Build file').first().json.csv }}",
+        "options": {}
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000010",
+      "name": "Share in channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/files.completeUploadExternal",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "options": {},
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ files: [{ id: $('Address given?').first().json.file_id, title: $('Build file').first().json.filename }], channel_id: $('Build file').first().json.channel, initial_comment: $('Build file').first().json.comment }) }}"
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000011",
+      "name": "Upload done?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// Slack answers 200 even when it refuses, with ok: false: fail so W0 alerts.\nconst r = $input.first().json;\nif (!r.ok) throw new Error(`Slack refused the audit file upload: ${r.error}`);\nreturn [{ json: r }];\n"
+      }
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000012",
+      "name": "Preview only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        140
+      ],
+      "parameters": {
+        "jsCode": "// Slack is not set up: nothing is uploaded. The message and the file are\n// kept in this execution as a preview.\nconst b = $('Build file').first().json;\nreturn [{ json: { posted: false, preview: true, message: b.comment, filename: b.filename, csv: b.csv } }];\n"
+      }
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000013",
+      "name": "Audit fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// W7's own audit entry (it falls in next week's file).\nconst b = $('Build file').first().json;\nconst posted = $('Upload done?').isExecuted;\nreturn [{\n  json: {\n    actor: 'n8n:w7-weekly-audit',\n    actor_type: 'n8n',\n    action: posted ? 'weekly-audit-posted' : 'weekly-audit-preview',\n    target: `${b.filename}: ${b.entries} entries, ${b.week_start} to ${b.week_end}`,\n    link: '',\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "d7b2c3d4-0001-4000-8000-000000000014",
+      "name": "Write audit entry",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        0
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Every Monday 04:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Last week's entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Last week's entries": {
+      "main": [
+        [
+          {
+            "node": "Build file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build file": {
+      "main": [
+        [
+          {
+            "node": "Slack set up?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack set up?": {
+      "main": [
+        [
+          {
+            "node": "Get upload address",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preview only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get upload address": {
+      "main": [
+        [
+          {
+            "node": "Address given?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Address given?": {
+      "main": [
+        [
+          {
+            "node": "Send file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send file": {
+      "main": [
+        [
+          {
+            "node": "Share in channel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Share in channel": {
+      "main": [
+        [
+          {
+            "node": "Upload done?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload done?": {
+      "main": [
+        [
+          {
+            "node": "Audit fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview only": {
+      "main": [
+        [
+          {
+            "node": "Audit fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit fields": {
+      "main": [
+        [
+          {
+            "node": "Write audit entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

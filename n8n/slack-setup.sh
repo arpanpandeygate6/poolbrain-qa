@@ -2,7 +2,8 @@
 # Installs the shared "Slack: post message" sub-workflow and the W0 error
 # handler (Story 5.3), points the other workflows' errors at W0, and installs
 # the workflows that post to Slack: the gate check (Story 5.6) and the
-# Ready-for-QA notice (Story 5.7) and the daily QA update W4 (Story 7.1).
+# Ready-for-QA notice (Story 5.7), the daily QA update W4 (Story 7.1) and the
+# weekly audit log W7 (Story 7.2).
 #
 # Slack is optional. Without it, every message becomes a preview you can read
 # in the n8n execution, and nothing is sent. To turn Slack on later:
@@ -40,12 +41,16 @@ install() {  # install <file> <id>: import (updating in place) and publish
   docker compose run --rm --no-deps -T n8n publish:workflow --id="$2" 2>&1 | grep -i "publishing" || true
 }
 
-# The channel lives only in the sub-workflow's Settings node; empty means preview.
-jq --arg ch "$SLACK_CHANNEL" \
-  '(.nodes[] | select(.name == "Settings") | .parameters.assignments.assignments[0].value) = $ch' \
-  workflows/slack-post-message.json > /tmp/slack-post-message.json
-install /tmp/slack-post-message.json slackPostMsg0001
-rm -f /tmp/slack-post-message.json
+# The channel lives only in the Settings node of the workflows that talk to
+# Slack directly (the post sub-workflow and W7's file upload); empty means preview.
+install_with_channel() {  # install_with_channel <file> <id>
+  jq --arg ch "$SLACK_CHANNEL" \
+    '(.nodes[] | select(.name == "Settings") | .parameters.assignments.assignments[] | select(.name == "slack_channel") | .value) = $ch' \
+    "$1" > /tmp/with-channel.json
+  install /tmp/with-channel.json "$2"
+  rm -f /tmp/with-channel.json
+}
+install_with_channel workflows/slack-post-message.json slackPostMsg0001
 install workflows/w0-error-handler.json w0ErrorHandler1
 # The kill-switch and daily-cap check every AI action calls first (Story 5.6).
 install workflows/gate-check.json gateCheck0000001
@@ -56,6 +61,7 @@ install workflows/w5-heartbeat.json w5Heartbeat00001
 install workflows/audit-record-github-runs.json runRecorder00001
 install workflows/ready-for-qa-notice.json readyNotice00001
 install workflows/w4-daily-update.json w4DailyUpdate001
+install_with_channel workflows/w7-weekly-audit.json w7WeeklyAudit001
 
 docker compose restart n8n >/dev/null 2>&1
 if [ -n "$SLACK_CHANNEL" ]; then

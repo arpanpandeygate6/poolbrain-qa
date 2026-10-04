@@ -506,3 +506,90 @@ def test_w4_failed_post_fails_the_run():
     with pytest.raises(subprocess.CalledProcessError) as failure:
         run_code(code_of(W4, "Audit fields"), {"posted": False, "error": "Slack said x"}, {"Build update": {}})
     assert "Daily update not posted: Slack said x" in failure.value.stderr
+
+
+# ---------------------------------------------------------------- W7 Weekly audit log (Story 7.2)
+
+W7 = workflow("w7-weekly-audit.json")
+
+
+def build_file(entries, start="2026-09-29", end="2026-10-05", entries_as_text=False):
+    week = {"week_start": start, "week_end": end, "entries": json.dumps(entries) if entries_as_text else entries}
+    return run_code(code_of(W7, "Build file"), week, {"Settings": {"slack_channel": "C1"}})[0]
+
+
+ENTRIES = [
+    {"ts": "2026-09-29T21:04:11Z", "actor": "ci:nightly", "actor_type": "ci", "action": "run-success",
+     "target": "nightly #12 on main (5b4a364)", "link": "https://github.com/o/r/actions/runs/1"},
+    {"ts": "2026-09-30T05:12:40Z", "actor": "asha@gate6.com", "actor_type": "human", "action": "reaction-bug",
+     "target": 'PM-5678, "Filed via QA bot"\nsecond line', "link": ""},
+]
+
+
+@needs_node
+def test_w7_csv_follows_the_contract():
+    from validate_contract import validate_csv
+
+    out = build_file(ENTRIES)
+    validate_csv("audit-export", out["csv"])
+    assert out["csv"].startswith("ts,actor,actor_type,action,target,link\r\n")
+    assert '"PM-5678, ""Filed via QA bot""\nsecond line"' in out["csv"]
+    assert out["filename"] == "audit-2026-10-05.csv" and out["entries"] == 2
+    assert out["bytes"] == len(out["csv"].encode())
+    assert out["header"] == "Weekly audit log: 29 Sep–5 Oct"
+    assert out["comment"] == (
+        "*Weekly audit log: 29 Sep–5 Oct*\n"
+        "The file lists every agent run, n8n action and QA decision this week (2 entries).\n"
+        "Columns: ts, actor, actor_type, action, target, link. Times in the file are UTC."
+    )
+
+
+@needs_node
+def test_w7_empty_week_and_text_entries():
+    from validate_contract import validate_csv
+
+    out = build_file([], start="2026-09-22", end="2026-09-28", entries_as_text=True)
+    assert out["csv"] == "ts,actor,actor_type,action,target,link\r\n"
+    validate_csv("audit-export", out["csv"])
+    assert out["header"] == "Weekly audit log: 22–28 Sep"
+    assert "No entries were recorded this week. The file has only the header row." in out["comment"]
+
+
+def test_w7_schedule_and_errors():
+    trigger = next(n for n in W7["nodes"] if n["name"] == "Every Monday 04:00 UTC")
+    assert trigger["parameters"]["rule"]["interval"][0]["expression"] == "0 4 * * 1"
+    assert W7["settings"]["errorWorkflow"] == W0["id"]
+    settings = next(n for n in W7["nodes"] if n["name"] == "Settings")
+    assert settings["parameters"]["assignments"]["assignments"][0] == {**settings["parameters"]["assignments"]["assignments"][0], "name": "slack_channel", "value": ""}
+
+
+@needs_node
+def test_w7_slack_refusal_fails_the_run():
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_code(code_of(W7, "Upload done?"), {"ok": False, "error": "not_in_channel"})
+    assert "Slack refused the audit file upload: not_in_channel" in failure.value.stderr
+
+
+@needs_node
+@pytest.mark.parametrize("posted, action", [(True, "weekly-audit-posted"), (False, "weekly-audit-preview")])
+def test_w7_audit_entry(posted, action):
+    nodes = {"Build file": {"filename": "audit-2026-10-05.csv", "entries": 2, "week_start": "2026-09-29", "week_end": "2026-10-05"}}
+    if posted:
+        nodes["Upload done?"] = {"ok": True}
+    [out] = run_code(code_of(W7, "Audit fields"), {}, nodes)
+    assert out == {"actor": "n8n:w7-weekly-audit", "actor_type": "n8n", "action": action,
+                   "target": "audit-2026-10-05.csv: 2 entries, 2026-09-29 to 2026-10-05", "link": ""}
+
+
+# Month names are "Sep", never "Sept" (newer en-GB data spells it Sept).
+
+@needs_node
+def test_september_dates_use_sep():
+    [n] = notices([{"issues": [{"key": "PM-5", "fields": {"summary": "T"}}]}],
+                  nightly=[gh_run("nightly.yml", "success", "2026-09-03T21:00:00Z")])
+    assert "(nightly, 04 Sep 02:30 IST)" in n["body"]
+    quarantine = [{"test_id": "api:tests/t.py::test_x", "owner": "ravi", "jira": "PM-1", "deadline": "2026-09-15"}]
+    assert "deadline 15 Sep" in daily_update([night(9, quarantine=quarantine)])["body"]
+    assert build_file([], start="2026-09-01", end="2026-09-07")["header"] == "Weekly audit log: 1–7 Sep"
+    for wf in (W0, READY, W4, W7):
+        assert "en-GB" not in json.dumps(wf)
