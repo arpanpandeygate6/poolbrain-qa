@@ -1378,3 +1378,97 @@ def test_bug_reporter_from_the_qa_leads_list_when_search_finds_nobody():
     assert "Nightly run: unknown" in json.dumps(out["with_reporter"]["description"])
     nodes["Settings"] = {**BUG_SETTINGS, "account_map": "{broken"}
     assert run_code(code_of(BUG, "Build bug"), {}, nodes)[0]["account_id"] == ""
+
+
+# ---------------------------------------------------------------- 🔁 Flaky (Story 6.6)
+
+FLAKY = workflow("reaction-flaky.json")
+INVENTORY_TEXT = (ROOT / "flows" / "inventory.yaml").read_text()
+
+
+def b64(text):
+    import base64
+
+    return {"statusCode": 200, "body": {"content": base64.b64encode(text.encode()).decode()}}
+
+
+def check_owner(inventory=INVENTORY_TEXT, quarantine="[]\n", test_id="api:tests/t.py::test_x", flow_id="job-creation"):
+    nodes = {"Reaction": {"test_id": test_id, "flow_id": flow_id}, "Inventory": b64(inventory), "Quarantine list": b64(quarantine)}
+    return run_code(code_of(FLAKY, "Check owner"), {}, nodes)[0]
+
+
+@needs_node
+def test_flaky_owner_from_the_inventory():
+    assert check_owner() == {"stop": "owner-missing"}  # every owner is still TBD on main
+    named = INVENTORY_TEXT.replace("  - id: job-creation\n    name: Job creation\n    owner: TBD", "  - id: job-creation\n    name: Job creation\n    owner: Ravi")
+    assert check_owner(named) == {"stop": "", "owner": "Ravi"}
+    assert check_owner(named, flow_id="login") == {"stop": "owner-missing"}
+    assert check_owner(named, flow_id="unknown-flow") == {"stop": "owner-missing"}
+    quarantined = '# comments\n- test_id: "api:tests/t.py::test_x"\n  owner: "Ravi"\n  jira: PM-1\n  deadline: "2026-10-19"\n'
+    assert check_owner(named, quarantined) == {"stop": "already-quarantined"}
+
+
+def build_task(failure=None, account_map="{}"):
+    reaction = {"test_id": "ui:tests/routes.spec.ts > Routes > sorts by time", "flow_id": "routing", "nightly_run_id": "7",
+                "actor_email": "asha@gate6.com", "actor_name": "Asha", "repo": "o/r"}
+    nodes = {"Reaction": reaction, "Settings": {**BUG_SETTINGS, "issue_type": "Task", "account_map": account_map},
+             "Check owner": {"owner": "Ravi"}, "Jira user": {"body": []}, "Slack link": {"permalink": "https://slack/p3"},
+             "Failure list": {"found": failure is not None, "data": {"failures": [failure] if failure else []}}}
+    return run_code(code_of(FLAKY, "Build task"), {}, nodes)[0], nodes
+
+
+@needs_node
+def test_flaky_owner_ticket():
+    failure = {"test_id": "ui:tests/routes.spec.ts > Routes > sorts by time", "flaky_candidate": True,
+               "history": [{"nightly_run_id": i, "result": r} for i, r in enumerate(["failed", "passed", "passed-on-retry", "passed"])]}
+    out, _ = build_task(failure)
+    fields = out["with_reporter"]
+    assert fields["summary"] == "Flaky test: ui:tests/routes.spec.ts > Routes > sorts by time"
+    assert fields["issuetype"] == {"name": "Task"} and fields["labels"] == ["filed-via-qa-bot"]
+    expected_deadline = datetime.fromtimestamp(datetime.now(UTC).timestamp() + 14 * 86400, UTC).strftime("%Y-%m-%d")
+    assert fields["duedate"] == out["deadline"] == expected_deadline
+    assert out["evidence"] == "Failed 2 of the last 4 nights, passed on retry."
+    text = json.dumps(fields["description"])
+    assert "Owner: Ravi (from the flow inventory)." in text and "Marked flaky by Asha. Failed 2 of the last 4 nights" in text
+    assert "the test keeps gating until QA merges it" in text
+    no_history, _ = build_task()
+    assert no_history["evidence"].startswith("No retry pass or earlier failure recorded")
+
+
+@needs_node
+def test_flaky_result_is_a_valid_quarantine_request():
+    from validate_contract import validate
+
+    built, nodes = build_task({"test_id": "ui:tests/routes.spec.ts > Routes > sorts by time", "flaky_candidate": True, "history": []})
+    nodes.update({"Build task": built, "Verify reporter": {"key": "PM-77", "reporter_ok": True}})
+    [out] = run_code(code_of(FLAKY, "Result"), {}, nodes)
+    assert out["jira_key"] == "PM-77" and out["stop"] == ""
+    validate("quarantine-request", out["request"])
+    assert out["request"]["owner"] == "Ravi" and out["request"]["marked_by"] == "asha@gate6.com"
+
+
+@needs_node
+def test_w3b_flaky_replies_and_queue():
+    base = {**mapped(1), "action": "flaky", "actor_id": "UQA", "actor_name": "Asha", "flow_id": "job-creation"}
+    done = [{**base, "stop": "", "jira_key": "PM-77", "url": "https://jira/browse/PM-77", "request": {"jira_key": "PM-77"}},
+            {**base, "map_id": 2, "stop": "owner-missing", "jira_key": "", "url": ""},
+            {**base, "map_id": 3, "stop": "already-quarantined", "jira_key": "", "url": ""}]
+    rows = [{"json": {"id": i}} for i in (1, 2, 3)]
+    out = run_code(code_of(W3B, "Jira replies").replace("$input.all()", json.dumps(rows)), {}, {"Jira results": done})
+    assert out[0]["body"] == "Quarantine requested by <@UQA>. Owner ticket PM-77 created.\nThe test keeps gating until QA merges the quarantine PR."
+    assert out[1]["body"].startswith("<@UQA>: Nothing was created: the flow `job-creation` has no owner in the flow inventory.")
+    assert out[2]["body"] == "<@UQA>: Nothing was created: this test is already in the quarantine list."
+    queued = run_code(code_of(W3B, "To queue"), {}, {"Jira results": done, "Record Jira decision": [{"id": 1}, {"id": 2}, {"id": None}]})
+    assert [q["jira_key"] for q in queued] == ["PM-77"]
+
+
+@needs_node
+def test_w3b_due_quarantines_go_through_the_gate():
+    due = [{"queue_id": 5, "jira_key": "PM-77", "payload": json.dumps({"jira_key": "PM-77", "quarantine_request": {"test_id": "t"}})},
+           {"queue_id": 6, "jira_key": "PM-78", "payload": {"jira_key": "PM-78", "quarantine_request": {"test_id": "u"}}}]
+    gate_in = run_code(code_of(W3B, "Quarantines to the gate").replace("$input.all()", json.dumps([{"json": d} for d in due])), {})
+    assert [(g["action"], g["workflow"], g["target"]) for g in gate_in] == [("dispatch", "quarantine", "PM-77"), ("dispatch", "quarantine", "PM-78")]
+    code = code_of(W3B, "Allowed quarantines").replace("$input.all()", json.dumps([{"json": {"allowed": False}}, {"json": {"allowed": True}}]))
+    assert [a["queue_id"] for a in run_code(code, {}, {"Due quarantines": due})] == [6]
+    positions = {n["name"]: n["position"] for n in W3B["nodes"]}
+    assert positions["To queue"][1] < positions["Jira replies"][1]  # queued before the reply can fail
