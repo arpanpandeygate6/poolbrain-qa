@@ -122,7 +122,10 @@
           "attemptToConvertTypes": false,
           "convertFieldsToString": false
         },
-        "options": {}
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
       },
       "onError": "continueErrorOutput"
     },

@@ -164,3 +164,97 @@ def test_w0_audit_entry(result, action):
     assert out["action"] == action
     assert out["link"] == "http://n8n/e/1"
     assert out["target"].startswith("W5 Heartbeat, step x")
+
+
+# ---------------------------------------------------------------- Ready-for-QA notice (Story 5.7)
+
+READY = workflow("ready-for-qa-notice.json")
+SETTINGS = {"jira_url": "https://jira.example", "project": "PM", "ready_status": "Ready to Test", "repo": "o/r"}
+
+
+def gh_run(path, conclusion, started, url="https://github.com/o/r/actions/runs/1"):
+    return {"path": f".github/workflows/{path}", "status": "completed", "conclusion": conclusion,
+            "run_started_at": started, "html_url": url}
+
+
+def notices(pages, noticed=(), nightly=None, uat_pr=None):
+    nodes = {
+        "Settings": SETTINGS,
+        "Already noticed": {"keys": list(noticed)},
+        "nightly runs": {"workflow_runs": nightly} if nightly is not None else {"error": "404"},
+        "uat-pr runs": {"workflow_runs": uat_pr} if uat_pr is not None else {"error": "404"},
+    }
+    code = code_of(READY, "Notices to send").replace(
+        "$('Find tickets').all()", f"{json.dumps([{'json': p} for p in pages])}"
+    )
+    return run_code(code, {}, nodes)
+
+
+def test_ready_notice_status_words_match_vocabulary():
+    code = code_of(READY, "Notices to send")
+    assert f"success: '{VOCABULARY['test_status']['passed']}'" in code
+    assert f"failure: '{VOCABULARY['test_status']['failed']}'" in code
+
+
+def test_ready_notice_reads_only_key_and_title_from_jira():
+    find = next(n for n in READY["nodes"] if n["name"] == "Find tickets")
+    params = {p["name"]: p["value"] for p in find["parameters"]["queryParameters"]["parameters"]}
+    assert params["fields"] == "summary"
+    assert READY["settings"]["errorWorkflow"] == W0["id"]
+
+
+@needs_node
+def test_ready_notice_message():
+    pages = [{"issues": [{"key": "PM-1", "fields": {"summary": "Fix <b>pay</b> & save"}}]},
+             {"issues": [{"key": "PM-2", "fields": {"summary": "Old one"}}]}]
+    nightly = [gh_run("nightly.yml", "success", "2026-10-03T21:00:00Z", "https://gh/n")]
+    uat_pr = [gh_run("uat-pr.yml", "failure", "2026-10-04T05:00:00Z", "https://gh/u"),
+              gh_run("uat-pr.yml", "cancelled", "2026-10-04T06:00:00Z")]
+    out = notices(pages, noticed=["PM-2"], nightly=nightly, uat_pr=uat_pr)
+    assert [o["key"] for o in out] == ["PM-1"]
+    [n] = out
+    assert n["kind"] == "info" and n["header"] == "PM-1 is ready for QA"
+    assert n["body"] == "*Fix &lt;b&gt;pay&lt;/b&gt; &amp; save*\nLatest UAT result: *FAILED* (uat-pr, 04 Oct 10:30 IST)."
+    assert n["links"] == [{"label": "Jira", "url": "https://jira.example/browse/PM-1"},
+                          {"label": "Latest run", "url": "https://gh/u"}]
+
+
+@needs_node
+def test_ready_notice_without_any_uat_run():
+    [n] = notices([{"issues": [{"key": "PM-3", "fields": {"summary": "T"}}]}])
+    assert n["body"] == "*T*\nNo UAT run yet."
+    assert n["links"] == [{"label": "Jira", "url": "https://jira.example/browse/PM-3"}]
+
+
+@needs_node
+def test_ready_notice_nothing_new():
+    assert notices([{"issues": []}]) == []
+
+
+NOTICE_ITEMS = [{"json": {"key": "PM-1", "jira": "https://jira/PM-1"}}, {"json": {"key": "PM-2", "jira": "https://jira/PM-2"}}]
+
+
+def run_on_results(node_name, results):
+    code = code_of(READY, node_name).replace("$('Notices to send').all()", json.dumps(NOTICE_ITEMS))
+    code = code.replace("$input.all()", json.dumps([{"json": r} for r in results]))
+    return run_code(code, {})
+
+
+@needs_node
+def test_ready_notice_audit_entries():
+    out = run_on_results("Audit fields", [{"posted": True, "link": "https://slack/p1"}, {"posted": False, "preview": True}])
+    assert out == [
+        {"actor": "n8n:ready-notice", "actor_type": "n8n", "action": "ready-notice-posted", "target": "PM-1",
+         "link": "https://slack/p1"},
+        {"actor": "n8n:ready-notice", "actor_type": "n8n", "action": "ready-notice-preview", "target": "PM-2",
+         "link": "https://jira/PM-2"},
+    ]
+
+
+@needs_node
+def test_ready_notice_failed_post_gets_no_audit_entry_and_fails_the_run():
+    results = [{"posted": True, "link": "l"}, {"posted": False, "error": "Slack said not_in_channel"}]
+    assert [o["target"] for o in run_on_results("Audit fields", results)] == ["PM-1"]
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_on_results("Check for failures", results)
+    assert "Slack did not take the notice for PM-2: Slack said not_in_channel" in failure.value.stderr

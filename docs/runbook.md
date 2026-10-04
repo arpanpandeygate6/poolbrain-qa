@@ -199,6 +199,23 @@ Nothing else changes: every workflow starts posting. Running `n8n/slack-setup.sh
 
 **Checked on 4 Oct 2026:** a throwaway scheduled workflow failed with an error containing a Slack token, an email, a URL query and a stack trace. W0 ran within a second and produced the preview "Alert: n8n workflow error in Throwaway W0 test / Step: call Jira. Error: Jira returned 403 for token [hidden] and [email] at https://x.atlassian.net/rest [line 1]. / Time: 04 Oct 20:59 IST.", with none of the secrets in the execution data, and wrote an `error-alert-preview` audit entry. The throwaway workflow was then deleted.
 
+## Ready-for-QA notice (Story 5.7)
+
+The n8n workflow "Ready-for-QA notice" (`n8n/workflows/ready-for-qa-notice.json`) is the early n8n demo: Jira, GitHub and Slack working together. It only reads Jira and GitHub; it never writes to Jira or starts a GitHub workflow.
+
+- **When:** every 5 minutes. It asks Jira for PM tickets that moved to **"Ready to Test"** (this board's name for "Ready for QA") since its last fully successful poll, plus 10 minutes of overlap. Its first run starts from that moment, so old tickets aren't announced.
+- **What it reads:** only each ticket's key and title. It never reads the description or acceptance criteria.
+- **The message:** "FYI: PM-123 is ready for QA", the ticket title, "Latest UAT result: **PASSED**" or "**FAILED**" with the workflow and its IST start time (from the newest finished `nightly` or `uat-pr` run; cancelled runs are skipped), or "No UAT run yet", and the links Jira · Latest run. It goes through "Slack: post message", so it is a preview until Slack is set up.
+- **One notice per ticket, ever.** Each notice writes an audit entry (`n8n:ready-notice`, `ready-notice-posted` with the Slack link, or `ready-notice-preview` with the Jira link), and a ticket with an entry is never announced again. A preview counts, so turning Slack on later doesn't re-announce tickets.
+- **When something fails** (Jira, GitHub or Slack): the run fails, W0 alerts, and the checkpoint doesn't move, so the next poll retries. Tickets already announced are not repeated.
+- **Settings** (project, status name, Jira URL, repository) are in the workflow's "Settings" node.
+
+**Volume.** PM is busy: the first test run on 4 Oct 2026 (an earlier version that looked back 8 days) found 100 tickets moved to "Ready to Test", which is about 12 a day. Those 100 were recorded as previews, so they will never be posted. If that many messages is too noisy for the channel, add a filter (for example a label or component) to the Jira query in the "Find tickets" node.
+
+**When W1 (Story 5.5) goes live,** switch this workflow off (unpublish it in n8n) so a ticket doesn't get two messages. W1's own "Tests generated" message replaces it. Record the date here when that happens.
+
+**Checked on 4 Oct 2026:** a run read the live PM project and produced correct previews (title, latest nightly result, Jira and run links, no description). The next run found no new tickets, posted nothing twice and moved the checkpoint on.
+
 ## Heartbeat (Story 5.4)
 
 n8n can't report its own death, so two sides work together:
