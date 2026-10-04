@@ -1,0 +1,1034 @@
+{
+  "id": "w1TicketWatch001",
+  "name": "W1 Ticket watcher",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "w0ErrorHandler1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000001",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000002",
+      "name": "Run now",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000003",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e5b2c3d4-0001-4000-8000-000000000300",
+              "name": "jira_url",
+              "value": "https://gatesix.atlassian.net",
+              "type": "string"
+            },
+            {
+              "id": "e5b2c3d4-0001-4000-8000-000000000301",
+              "name": "project",
+              "value": "PM",
+              "type": "string"
+            },
+            {
+              "id": "e5b2c3d4-0001-4000-8000-000000000302",
+              "name": "draft_status",
+              "value": "In Progress",
+              "type": "string"
+            },
+            {
+              "id": "e5b2c3d4-0001-4000-8000-000000000303",
+              "name": "tests_status",
+              "value": "Ready to Test",
+              "type": "string"
+            },
+            {
+              "id": "e5b2c3d4-0001-4000-8000-000000000304",
+              "name": "ac_field",
+              "value": "customfield_11600",
+              "type": "string"
+            },
+            {
+              "id": "e5b2c3d4-0001-4000-8000-000000000305",
+              "name": "repo",
+              "value": "arpanpandeygate6/poolbrain-qa",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000004",
+      "name": "Masking patterns",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// A copy of scripts/masking-patterns.json, pinned by its SHA-256 (AR-15). `ci`\n// (scripts/check_masking_hash.py) fails when the file changes without this\n// copy; the next node re-hashes the copy on every run and W1 refuses to start\n// anything when it doesn't match.\nconst MASKING_PATTERNS_SHA256 = '0521d2bbd3d976700a050807dc28de89f9f34fc88ff29b0b07505a16014ab222';\nconst MASKING_PATTERNS_RAW = \"{\\n  \\\"schema_version\\\": 1,\\n  \\\"_about\\\": \\\"The one set of masking patterns (AD-13, SEC-05). Applied in this order by scripts/sanitize.py (Python) and by the copy pinned in n8n W1 (JavaScript), so patterns use only regex syntax both understand: no named groups, no lookbehind, no backreferences in replacements. flags may be 'i'. Every pattern needs examples (text that must be masked); keeps lists text that must survive. Changing this file changes its hash: update the n8n copy in the same PR (scripts/check_masking_hash.py).\\\",\\n  \\\"patterns\\\": [\\n    {\\n      \\\"name\\\": \\\"private-key\\\",\\n      \\\"pattern\\\": \\\"-----BEGIN [A-Z ]*PRIVATE KEY-----[\\\\\\\\s\\\\\\\\S]*?-----END [A-Z ]*PRIVATE KEY-----\\\",\\n      \\\"flags\\\": \\\"\\\",\\n      \\\"replacement\\\": \\\"[private key]\\\",\\n      \\\"examples\\\": [\\\"-----BEGIN RSA PRIVATE KEY-----\\\\nMIIEpAIBAAKCAQEAfake\\\\n-----END RSA PRIVATE KEY-----\\\"]\\n    },\\n    {\\n      \\\"name\\\": \\\"jwt\\\",\\n      \\\"pattern\\\": \\\"\\\\\\\\beyJ[\\\\\\\\w-]{10,}\\\\\\\\.[\\\\\\\\w-]{10,}\\\\\\\\.[\\\\\\\\w-]{10,}\\\",\\n      \\\"flags\\\": \\\"\\\",\\n      \\\"replacement\\\": \\\"[token]\\\",\\n      \\\"examples\\\": [\\\"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U\\\"]\\n    },\\n    {\\n      \\\"name\\\": \\\"known-token\\\",\\n      \\\"pattern\\\": \\\"\\\\\\\\b(?:xox[abposr]-[\\\\\\\\w-]{10,}|gh[pousr]_\\\\\\\\w{20,}|github_pat_\\\\\\\\w{20,}|sk-[\\\\\\\\w-]{20,}|[spr]k_(?:live|test)_\\\\\\\\w{10,}|AKIA[0-9A-Z]{16}|AIza[\\\\\\\\w-]{35})\\\",\\n      \\\"flags\\\": \\\"\\\",\\n      \\\"replacement\\\": \\\"[token]\\\",\\n      \\\"examples\\\": [\\n        \\\"xoxb-123456789012-abcdefghijkl\\\",\\n        \\\"ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345\\\",\\n        \\\"github_pat_11ABCDEFG0123456789_abcdefghij\\\",\\n        \\\"sk_live_51HfakeFAKEfake\\\",\\n        \\\"AKIAIOSFODNN7EXAMPLE\\\",\\n        \\\"sk-ant-api03-FAKEfakeFAKEfake12345\\\"\\n      ]\\n    },\\n    {\\n      \\\"name\\\": \\\"auth-header\\\",\\n      \\\"pattern\\\": \\\"\\\\\\\\b(?:bearer|basic|token)\\\\\\\\s+[\\\\\\\\w.~+/=-]{8,}\\\",\\n      \\\"flags\\\": \\\"i\\\",\\n      \\\"replacement\\\": \\\"[auth hidden]\\\",\\n      \\\"examples\\\": [\\\"Authorization: Bearer abc.def-ghi_jkl\\\", \\\"Authorization: Basic dXNlcjpwYXNzd29yZA==\\\"],\\n      \\\"keeps\\\": [\\\"the token was refused\\\"]\\n    },\\n    {\\n      \\\"name\\\": \\\"secret-value\\\",\\n      \\\"pattern\\\": \\\"\\\\\\\\b(?:password|passwd|pwd|secret|client[_-]?secret|api[_-]?key|access[_-]?token|refresh[_-]?token|token|otp)\\\\\\\\b[\\\\\\\"']?\\\\\\\\s*[=:]\\\\\\\\s*[\\\\\\\"']?[^\\\\\\\\s\\\\\\\"',;&)}\\\\\\\\[]+\\\",\\n      \\\"flags\\\": \\\"i\\\",\\n      \\\"replacement\\\": \\\"[secret hidden]\\\",\\n      \\\"examples\\\": [\\\"password=Hunter2!\\\", \\\"{\\\\\\\"api_key\\\\\\\": \\\\\\\"abc123def\\\\\\\"}\\\", \\\"?access_token=zzz999&page=2\\\", \\\"OTP: 482913\\\"],\\n      \\\"keeps\\\": [\\\"password field is empty\\\", \\\"test_reset_password_link\\\", \\\"token = \\\\\\\"[auth hidden]\\\\\\\"\\\"]\\n    },\\n    {\\n      \\\"name\\\": \\\"url-credentials\\\",\\n      \\\"pattern\\\": \\\"//[^/\\\\\\\\s:@]+:[^/\\\\\\\\s@]+@\\\",\\n      \\\"flags\\\": \\\"\\\",\\n      \\\"replacement\\\": \\\"//[hidden]@\\\",\\n      \\\"examples\\\": [\\\"mysql://qa_readonly:s3cret@db.internal:3306/poolbrain\\\"]\\n    },\\n    {\\n      \\\"name\\\": \\\"email\\\",\\n      \\\"pattern\\\": \\\"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\\\\\\\.[A-Za-z0-9-]+)*\\\\\\\\.[A-Za-z]{2,}\\\",\\n      \\\"flags\\\": \\\"\\\",\\n      \\\"replacement\\\": \\\"[email]\\\",\\n      \\\"examples\\\": [\\\"jane.doe+pool@example.com\\\", \\\"Expected owner@acme-pools.co.uk to be shown\\\"]\\n    },\\n    {\\n      \\\"name\\\": \\\"street-address\\\",\\n      \\\"pattern\\\": \\\"\\\\\\\\b\\\\\\\\d{1,6}\\\\\\\\s+(?:[A-Z][A-Za-z]*\\\\\\\\.?\\\\\\\\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct|Way|Place|Pl|Terrace|Ter|Circle|Cir|Parkway|Pkwy|Highway|Hwy|Trail|Trl)\\\\\\\\b\\\\\\\\.?\\\",\\n      \\\"flags\\\": \\\"\\\",\\n      \\\"replacement\\\": \\\"[address]\\\",\\n      \\\"examples\\\": [\\\"1234 Palm Beach Blvd\\\", \\\"Service at 77 N. Ocean Dr. today\\\", \\\"5 Elm St\\\"],\\n      \\\"keeps\\\": [\\\"Expected 3 Jobs but found 2\\\", \\\"line 120 Step\\\"]\\n    },\\n    {\\n      \\\"name\\\": \\\"card-like-number\\\",\\n      \\\"pattern\\\": \\\"\\\\\\\\b(?:\\\\\\\\d[ -]?){12,18}\\\\\\\\d\\\\\\\\b\\\",\\n      \\\"flags\\\": \\\"\\\",\\n      \\\"replacement\\\": \\\"[card number]\\\",\\n      \\\"examples\\\": [\\\"4242 4242 4242 4242\\\", \\\"4111-1111-1111-1111\\\", \\\"5555555555554444\\\"],\\n      \\\"keeps\\\": [\\\"expected 200 but got 500\\\", \\\"job 104233 not found\\\"]\\n    },\\n    {\\n      \\\"name\\\": \\\"phone-number\\\",\\n      \\\"pattern\\\": \\\"(?:\\\\\\\\+?1[ .-]?)?\\\\\\\\(?\\\\\\\\b\\\\\\\\d{3}\\\\\\\\)?[ .-]\\\\\\\\d{3}[ .-]\\\\\\\\d{4}\\\\\\\\b\\\",\\n      \\\"flags\\\": \\\"\\\",\\n      \\\"replacement\\\": \\\"[phone]\\\",\\n      \\\"examples\\\": [\\\"(561) 555-0142\\\", \\\"+1 561-555-0142\\\", \\\"561.555.0142\\\"],\\n      \\\"keeps\\\": [\\\"at line 123\\\"]\\n    },\\n    {\\n      \\\"name\\\": \\\"long-hex-secret\\\",\\n      \\\"pattern\\\": \\\"\\\\\\\\b[A-Fa-f0-9]{32,}\\\\\\\\b\\\",\\n      \\\"flags\\\": \\\"\\\",\\n      \\\"replacement\\\": \\\"[hidden]\\\",\\n      \\\"examples\\\": [\\\"session 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\\\"],\\n      \\\"keeps\\\": [\\\"commit 5b4a364\\\"]\\n    }\\n  ]\\n}\\n\";\nreturn [{ json: { raw: MASKING_PATTERNS_RAW, pinned: MASKING_PATTERNS_SHA256 } }];\n"
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000005",
+      "name": "Hash the copy",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "action": "hash",
+        "type": "SHA256",
+        "value": "={{ $json.raw }}",
+        "dataPropertyName": "actual",
+        "encoding": "hex"
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000006",
+      "name": "Check the pin",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Never start anything with masking patterns that aren't the pinned ones.\nconst { pinned } = $('Masking patterns').first().json;\nconst actual = $input.first().json.actual;\nif (actual !== pinned) {\n  throw new Error(`Masking patterns copy does not match its pinned hash (${String(actual).slice(0, 12)}… vs ${pinned.slice(0, 12)}…); nothing was started`);\n}\nreturn [{ json: { ok: true } }];\n"
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000007",
+      "name": "Get checkpoint",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Look back to the last fully successful poll, plus 10 minutes for Jira's\n-- search to catch up, in minutes (Jira's relative dates ignore time zones).\n-- The first run starts from now. Known tickets are skipped later.\nSELECT ceil(extract(epoch FROM now() - (coalesce(\n         (SELECT value FROM audit.checkpoints WHERE name = 'w1'), now()) - interval '10 minutes')) / 60)::int\n         AS look_back_minutes,\n       now() AS polled_at;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000008",
+      "name": "Find draft tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/search/jql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "=project = \"{{ $('Settings').first().json.project }}\" AND status CHANGED TO \"{{ $('Settings').first().json.draft_status }}\" AFTER -{{ $('Get checkpoint').first().json.look_back_minutes }}m ORDER BY updated ASC"
+            },
+            {
+              "name": "fields",
+              "value": "status"
+            },
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "nextPageToken",
+                    "value": "={{ $response.body.nextPageToken }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.nextPageToken }}",
+              "limitPagesFetched": true,
+              "maxRequests": 10
+            }
+          }
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000009",
+      "name": "Find test tickets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/search/jql",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "jql",
+              "value": "=project = \"{{ $('Settings').first().json.project }}\" AND status CHANGED TO \"{{ $('Settings').first().json.tests_status }}\" AFTER -{{ $('Get checkpoint').first().json.look_back_minutes }}m ORDER BY updated ASC"
+            },
+            {
+              "name": "fields",
+              "value": "status"
+            },
+            {
+              "name": "maxResults",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "nextPageToken",
+                    "value": "={{ $response.body.nextPageToken }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.nextPageToken }}",
+              "limitPagesFetched": true,
+              "maxRequests": 10
+            }
+          }
+        }
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000010",
+      "name": "Known requests",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1600,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT coalesce(json_agg(ticket || ' ' || workflow), '[]') AS known FROM audit.w1_requests;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000011",
+      "name": "Due queue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1800,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Requests the gate kept back that may run now, in arrival order (Story 5.6).\nSELECT coalesce(json_agg(json_build_object('queue_id', id, 'ticket', target, 'workflow', workflow,\n                                           'ticket_text', payload->>'ticket_text') ORDER BY created_at, id), '[]') AS due\nFROM audit.deferred_requests\nWHERE action = 'dispatch' AND workflow IN ('draft-cases', 'generate-tests')\n  AND done_at IS NULL AND not_before <= now();",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000012",
+      "name": "New requests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Tickets that newly moved to a watched status and have no record yet.\n// \"In Progress\" (this board has no \"Ready for Dev\") starts draft-cases;\n// \"Ready to Test\" starts generate-tests. Other statuses and projects are ignored.\nconst known = new Set($('Known requests').first().json.known ?? []);\nconst queued = new Set((Array.isArray($('Due queue').first().json.due) ? $('Due queue').first().json.due : [])\n  .map((d) => `${d.ticket} ${d.workflow}`));\nconst found = [\n  ...$('Find draft tickets').all().flatMap((p) => (p.json.issues ?? []).map((i) => ({ ticket: i.key, workflow: 'draft-cases' }))),\n  ...$('Find test tickets').all().flatMap((p) => (p.json.issues ?? []).map((i) => ({ ticket: i.key, workflow: 'generate-tests' }))),\n];\nconst seen = new Set();\nreturn found\n  .filter((r) => /^[A-Z][A-Z0-9]+-[0-9]+$/.test(r.ticket))\n  .filter((r) => !known.has(`${r.ticket} ${r.workflow}`) && !queued.has(`${r.ticket} ${r.workflow}`))\n  .filter((r) => !seen.has(`${r.ticket} ${r.workflow}`) && seen.add(`${r.ticket} ${r.workflow}`))\n  .map((r) => ({ json: r }));\n"
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000013",
+      "name": "Fetch ticket text",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Settings').first().json.jira_url }}/rest/api/3/issue/{{ $json.ticket }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "jiraSoftwareCloudApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "=description,{{ $('Settings').first().json.ac_field }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "3AkYlHarhuAfIA7s",
+          "name": "Jira (QA relay)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000014",
+      "name": "Ticket text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Only the description and the acceptance criteria are read (SEC-05), turned\n// from Jira's document format into plain text and masked with the pinned\n// patterns. Nothing else from the ticket leaves Jira.\nconst MAX = 15000;\nconst patterns = JSON.parse($('Masking patterns').first().json.raw).patterns;\nconst mask = (text) => patterns.reduce((t, p) => t.replace(new RegExp(p.pattern, 'g' + (p.flags || '')), () => p.replacement), text);\nconst acField = $('Settings').first().json.ac_field;\n\n// Atlassian Document Format to plain text: paragraphs and headings on their\n// own lines, list items as \"- \", tables cell by cell. Links keep their text only.\nfunction plain(node, depth = 0) {\n  if (node == null) return '';\n  if (typeof node === 'string') return node;\n  if (node.type === 'text') return node.text ?? '';\n  if (node.type === 'hardBreak') return '\\n';\n  if (['mention', 'emoji', 'inlineCard'].includes(node.type)) return node.attrs?.text ?? '';\n  const inner = (node.content ?? []).map((c) => plain(c, depth + 1)).join('');\n  if (node.type === 'listItem') return `- ${inner.trim()}\\n`;\n  if (['paragraph', 'heading', 'codeBlock', 'blockquote', 'tableRow'].includes(node.type)) return `${inner.trim()}\\n`;\n  if (node.type === 'tableCell' || node.type === 'tableHeader') return `${inner.trim()} | `;\n  return inner;\n}\n\nconst requests = $('New requests').all();\nreturn $input.all().map((item, i) => {\n  const fields = item.json.fields ?? {};\n  const description = plain(fields.description).trim();\n  const criteria = plain(fields[acField]).trim();\n  let text = `Description:\\n${description || '(none)'}\\n\\nAcceptance criteria:\\n${criteria || '(none)'}`;\n  text = mask(text.replace(/\\n{3,}/g, '\\n\\n'));\n  if (text.length > MAX) text = `${text.slice(0, MAX - 1)}…`;\n  return { json: { ...requests[i].json, ticket_text: text, queue_id: 0 } };\n});\n"
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000015",
+      "name": "Requests to try",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Everything to put through the gate this run: newly found tickets (masked\n// above) and due requests from the waiting list, which were masked when queued.\nconst fresh = $('Ticket text').isExecuted ? $('Ticket text').all().map((i) => i.json) : [];\nconst dueRaw = $('Due queue').first().json.due;\nconst due = (Array.isArray(dueRaw) ? dueRaw : JSON.parse(dueRaw || '[]'))\n  .filter((d) => /^[A-Z][A-Z0-9]+-[0-9]+$/.test(d.ticket ?? ''));\nreturn [...due, ...fresh].map((r) => ({\n  json: {\n    action: 'dispatch',\n    workflow: r.workflow,\n    target: r.ticket,\n    payload: { ticket: r.ticket, ticket_text: r.ticket_text ?? '' },\n    queue_id: r.queue_id ?? 0,\n  },\n}));\n"
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000016",
+      "name": "Anything to try?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2200,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e5b2c3d4-0001-4000-8000-000000001601",
+              "leftValue": "={{ $json.target ?? '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000017",
+      "name": "Gate",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2400,
+        0
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "gateCheck0000001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "={{ $json.action }}",
+            "workflow": "={{ $json.workflow }}",
+            "target": "={{ $json.target }}",
+            "payload": "={{ $json.payload }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "payload",
+              "displayName": "payload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000018",
+      "name": "Gate answers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Pair each gate answer with its request (both in the same order).\nconst requests = $('Requests to try').all();\nreturn $input.all().map((answer, i) => ({ json: { ...requests[i].json, allowed: answer.json.allowed === true,\n  reason: answer.json.reason ?? '' } }));\n"
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000019",
+      "name": "Allowed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2800,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e5b2c3d4-0001-4000-8000-000000001901",
+              "leftValue": "={{ $json.allowed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000020",
+      "name": "Start the workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3000,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/workflows/{{ $json.workflow }}.yml/dispatches",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ ref: 'main', inputs: { ticket: $json.target, ticket_text: $json.payload.ticket_text } }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000021",
+      "name": "Record started",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3200,
+        -100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- One record per (ticket, workflow). A started request leaves the waiting list.\nWITH saved AS (\n  INSERT INTO audit.w1_requests (ticket, workflow, state, dispatched_at)\n  VALUES ($1, $2, $3, CASE WHEN $3 = 'dispatched' THEN now() END)\n  ON CONFLICT (ticket, workflow) DO UPDATE\n    SET state = excluded.state,\n        dispatched_at = coalesce(excluded.dispatched_at, audit.w1_requests.dispatched_at),\n        attempts = audit.w1_requests.attempts + 1,\n        updated_at = now()\n  RETURNING id\n), dequeued AS (\n  UPDATE audit.deferred_requests SET done_at = now()\n  WHERE id = $4::bigint AND $3 = 'dispatched' AND done_at IS NULL\n  RETURNING id\n)\nSELECT (SELECT id FROM saved) AS record_id, (SELECT count(*) FROM dequeued) AS dequeued;",
+        "options": {
+          "queryReplacement": "={{ [$('Allowed?').item.json.target, $('Allowed?').item.json.workflow, 'dispatched', $('Allowed?').item.json.queue_id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000022",
+      "name": "Record kept back",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3000,
+        100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- One record per (ticket, workflow). A started request leaves the waiting list.\nWITH saved AS (\n  INSERT INTO audit.w1_requests (ticket, workflow, state, dispatched_at)\n  VALUES ($1, $2, $3, CASE WHEN $3 = 'dispatched' THEN now() END)\n  ON CONFLICT (ticket, workflow) DO UPDATE\n    SET state = excluded.state,\n        dispatched_at = coalesce(excluded.dispatched_at, audit.w1_requests.dispatched_at),\n        attempts = audit.w1_requests.attempts + 1,\n        updated_at = now()\n  RETURNING id\n), dequeued AS (\n  UPDATE audit.deferred_requests SET done_at = now()\n  WHERE id = $4::bigint AND $3 = 'dispatched' AND done_at IS NULL\n  RETURNING id\n)\nSELECT (SELECT id FROM saved) AS record_id, (SELECT count(*) FROM dequeued) AS dequeued;",
+        "options": {
+          "queryReplacement": "={{ [$json.target, $json.workflow, 'deferred', $json.queue_id] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000023",
+      "name": "Audit fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// One audit entry per start (a kept-back request is recorded by the gate).\nconst requests = $('Gate answers').all().filter((r) => r.json.allowed);\nreturn requests.map((r) => ({\n  json: {\n    actor: 'n8n:w1-ticket-watcher',\n    actor_type: 'n8n',\n    action: `dispatch-${r.json.workflow}`,\n    target: r.json.target,\n    link: `https://github.com/${$('Settings').first().json.repo}/actions/workflows/${r.json.workflow}.yml`,\n  },\n}));\n"
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000024",
+      "name": "Write audit entry",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3600,
+        -100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "e5b2c3d4-0001-4000-8000-000000000025",
+      "name": "Save checkpoint",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3800,
+        100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit.checkpoints (name, value) VALUES ('w1', $1)\nON CONFLICT (name) DO UPDATE SET value = excluded.value\nRETURNING value;",
+        "options": {
+          "queryReplacement": "={{ [$('Get checkpoint').first().json.polled_at] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      },
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Masking patterns",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Masking patterns": {
+      "main": [
+        [
+          {
+            "node": "Hash the copy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash the copy": {
+      "main": [
+        [
+          {
+            "node": "Check the pin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check the pin": {
+      "main": [
+        [
+          {
+            "node": "Get checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get checkpoint": {
+      "main": [
+        [
+          {
+            "node": "Find draft tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find draft tickets": {
+      "main": [
+        [
+          {
+            "node": "Find test tickets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find test tickets": {
+      "main": [
+        [
+          {
+            "node": "Known requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Known requests": {
+      "main": [
+        [
+          {
+            "node": "Due queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Due queue": {
+      "main": [
+        [
+          {
+            "node": "New requests",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Requests to try",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New requests": {
+      "main": [
+        [
+          {
+            "node": "Fetch ticket text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch ticket text": {
+      "main": [
+        [
+          {
+            "node": "Ticket text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requests to try": {
+      "main": [
+        [
+          {
+            "node": "Anything to try?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to try?": {
+      "main": [
+        [
+          {
+            "node": "Gate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate": {
+      "main": [
+        [
+          {
+            "node": "Gate answers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate answers": {
+      "main": [
+        [
+          {
+            "node": "Allowed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed?": {
+      "main": [
+        [
+          {
+            "node": "Start the workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record kept back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start the workflow": {
+      "main": [
+        [
+          {
+            "node": "Record started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record started": {
+      "main": [
+        [
+          {
+            "node": "Audit fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit fields": {
+      "main": [
+        [
+          {
+            "node": "Write audit entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write audit entry": {
+      "main": [
+        [
+          {
+            "node": "Save checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record kept back": {
+      "main": [
+        [
+          {
+            "node": "Save checkpoint",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

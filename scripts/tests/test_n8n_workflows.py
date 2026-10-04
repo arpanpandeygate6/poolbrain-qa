@@ -33,7 +33,7 @@ def run_code(code: str, input_json: dict, nodes: dict | None = None) -> list[dic
     stands for several items of that node; a node left out did not run."""
     harness = f"""
 const NODES = {json.dumps(nodes or {})};
-const $input = {{ first: () => ({{ json: {json.dumps(input_json)} }}) }};
+const $input = {{ first: () => ({{ json: {json.dumps(input_json)} }}), all: () => [{{ json: {json.dumps(input_json)} }}] }};
 const items = (name) => [].concat(NODES[name]).map((json) => ({{ json }}));
 const $ = (name) => ({{ first: () => items(name)[0], all: () => items(name), isExecuted: name in NODES }});
 const out = (() => {{ {code} }})();
@@ -593,3 +593,126 @@ def test_september_dates_use_sep():
     assert build_file([], start="2026-09-01", end="2026-09-07")["header"] == "Weekly audit log: 1–7 Sep"
     for wf in (W0, READY, W4, W7):
         assert "en-GB" not in json.dumps(wf)
+
+
+# ---------------------------------------------------------------- W1 Ticket watcher (Story 5.5)
+
+W1 = workflow("w1-ticket-watcher.json")
+PATTERNS_FILE = ROOT / "scripts" / "masking-patterns.json"
+
+
+def w1_patterns():
+    return run_code(code_of(W1, "Masking patterns"), {})[0]
+
+
+def test_w1_copy_of_the_patterns_is_the_file_and_its_hash():
+    import hashlib
+
+    out = w1_patterns()
+    assert out["raw"] == PATTERNS_FILE.read_text(encoding="utf-8")
+    assert out["pinned"] == hashlib.sha256(PATTERNS_FILE.read_bytes()).hexdigest()
+
+
+@needs_node
+def test_w1_refuses_when_the_copy_does_not_match():
+    nodes = {"Masking patterns": {"pinned": "a" * 64}}
+    assert run_code(code_of(W1, "Check the pin"), {"actual": "a" * 64}, nodes) == [{"ok": True}]
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_code(code_of(W1, "Check the pin"), {"actual": "b" * 64}, nodes)
+    assert "Masking patterns copy does not match its pinned hash" in failure.value.stderr
+
+
+def test_w1_reads_only_description_and_acceptance_criteria():
+    fetch = next(n for n in W1["nodes"] if n["name"] == "Fetch ticket text")
+    assert fetch["parameters"]["queryParameters"]["parameters"] == [
+        {"name": "fields", "value": "=description,{{ $('Settings').first().json.ac_field }}"}]
+    settings = {a["name"]: a["value"] for a in next(n for n in W1["nodes"] if n["name"] == "Settings")["parameters"]["assignments"]["assignments"]}
+    assert settings["ac_field"] == "customfield_11600"
+    assert settings["draft_status"] == "In Progress" and settings["tests_status"] == "Ready to Test"
+    assert W1["settings"]["errorWorkflow"] == W0["id"]
+
+
+@needs_node
+def test_w1_new_requests_skip_known_queued_and_repeated():
+    nodes = {
+        "Known requests": {"known": ["PM-1 draft-cases"]},
+        "Due queue": {"due": [{"ticket": "PM-2", "workflow": "generate-tests", "queue_id": 4}]},
+        "Find draft tickets": [{"issues": [{"key": "PM-1"}, {"key": "PM-3"}]}, {"issues": [{"key": "PM-3"}, {"key": "bad key"}]}],
+        "Find test tickets": [{"issues": [{"key": "PM-1"}, {"key": "PM-2"}]}],
+    }
+    out = run_code(code_of(W1, "New requests"), {}, nodes)
+    assert out == [{"ticket": "PM-3", "workflow": "draft-cases"}, {"ticket": "PM-1", "workflow": "generate-tests"}]
+
+
+def adf(*paragraphs, items=()):
+    content = [{"type": "paragraph", "content": [{"type": "text", "text": p}]} for p in paragraphs]
+    if items:
+        content.append({"type": "bulletList", "content": [
+            {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": i}]}]} for i in items]})
+    return {"type": "doc", "version": 1, "content": content}
+
+
+@needs_node
+def test_w1_ticket_text_is_plain_masked_and_only_two_fields():
+    from tests.test_sanitize import FIXTURES
+
+    secrets = " ".join(v for k, v in FIXTURES.items() if k != "private-key")
+    issue = {"fields": {
+        "description": adf("Owner maria.lopez@sunnypools.com can create a job.", f"Token: {secrets}"),
+        "customfield_11600": adf("Given a job", items=["it is saved", "it starts as Scheduled"]),
+        "summary": "SHOULD NOT APPEAR", "comment": "SHOULD NOT APPEAR",
+    }}
+    nodes = {"Masking patterns": w1_patterns(), "Settings": {"ac_field": "customfield_11600"},
+             "New requests": [{"ticket": "PM-7", "workflow": "draft-cases"}]}
+    [out] = run_code(code_of(W1, "Ticket text"), issue, nodes)
+    assert out["ticket"] == "PM-7" and out["workflow"] == "draft-cases" and out["queue_id"] == 0
+    text = out["ticket_text"]
+    assert text.startswith("Description:\nOwner [email] can create a job.\n")
+    assert "Acceptance criteria:\nGiven a job\n- it is saved\n- it starts as Scheduled" in text
+    assert "SHOULD NOT APPEAR" not in text
+    for secret in FIXTURES.values():
+        assert secret not in text
+
+
+@needs_node
+def test_w1_ticket_text_without_fields_and_long_text():
+    nodes = {"Masking patterns": w1_patterns(), "Settings": {"ac_field": "customfield_11600"},
+             "New requests": [{"ticket": "PM-7", "workflow": "draft-cases"}]}
+    [out] = run_code(code_of(W1, "Ticket text"), {"fields": {}}, nodes)
+    assert out["ticket_text"] == "Description:\n(none)\n\nAcceptance criteria:\n(none)"
+    [out] = run_code(code_of(W1, "Ticket text"), {"fields": {"description": adf("word " * 5000)}}, nodes)
+    assert len(out["ticket_text"]) == 15000 and out["ticket_text"].endswith("…")
+
+
+@needs_node
+def test_w1_requests_to_try_put_the_waiting_list_first():
+    nodes = {
+        "Due queue": {"due": json.dumps([{"queue_id": 4, "ticket": "PM-2", "workflow": "generate-tests", "ticket_text": "masked"}])},
+        "Ticket text": [{"ticket": "PM-3", "workflow": "draft-cases", "ticket_text": "new", "queue_id": 0}],
+    }
+    out = run_code(code_of(W1, "Requests to try"), {}, nodes)
+    assert out == [
+        {"action": "dispatch", "workflow": "generate-tests", "target": "PM-2", "payload": {"ticket": "PM-2", "ticket_text": "masked"}, "queue_id": 4},
+        {"action": "dispatch", "workflow": "draft-cases", "target": "PM-3", "payload": {"ticket": "PM-3", "ticket_text": "new"}, "queue_id": 0},
+    ]
+    del nodes["Ticket text"]
+    assert [r["target"] for r in run_code(code_of(W1, "Requests to try"), {}, nodes)] == ["PM-2"]
+
+
+@needs_node
+def test_w1_gate_answers_and_audit():
+    requests = [{"target": "PM-2", "workflow": "generate-tests", "queue_id": 4}, {"target": "PM-3", "workflow": "draft-cases", "queue_id": 0}]
+    code = code_of(W1, "Gate answers").replace("$input.all()", json.dumps([{"json": {"allowed": True, "reason": "ok"}},
+                                                                            {"json": {"allowed": False, "reason": "disabled"}}]))
+    answers = run_code(code, {}, {"Requests to try": requests})
+    assert [(a["target"], a["allowed"], a["reason"]) for a in answers] == [("PM-2", True, "ok"), ("PM-3", False, "disabled")]
+    audit = run_code(code_of(W1, "Audit fields"), {}, {"Gate answers": answers, "Settings": {"repo": "o/r"}})
+    assert audit == [{"actor": "n8n:w1-ticket-watcher", "actor_type": "n8n", "action": "dispatch-generate-tests",
+                      "target": "PM-2", "link": "https://github.com/o/r/actions/workflows/generate-tests.yml"}]
+
+
+def test_w1_dispatches_with_the_masked_text_on_main():
+    start = next(n for n in W1["nodes"] if n["name"] == "Start the workflow")
+    assert "ref: 'main'" in start["parameters"]["jsonBody"]
+    assert "ticket_text: $json.payload.ticket_text" in start["parameters"]["jsonBody"]
+    assert W1["connections"]["Allowed?"]["main"][0][0]["node"] == "Start the workflow"

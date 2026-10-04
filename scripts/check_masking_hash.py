@@ -45,7 +45,8 @@ def main() -> int:
         print(f"FAILED: {problem}")
     if not problems:
         if pinned:
-            print(f"OK: {', '.join(pinned)} pin the current masking patterns ({patterns_hash()[:12]}…).")
+            verb = "pins" if len(pinned) == 1 else "pin"
+            print(f"OK: {', '.join(pinned)} {verb} the current masking patterns ({patterns_hash()[:12]}…).")
         else:
             print("OK: no n8n workflow holds a copy of the masking patterns yet.")
     return 1 if problems else 0

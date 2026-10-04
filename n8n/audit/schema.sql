@@ -81,3 +81,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS deferred_requests_open
     ON audit.deferred_requests (action, workflow, target) WHERE done_at IS NULL;
 REVOKE ALL ON audit.deferred_requests FROM PUBLIC, audit_writer;
 GRANT SELECT, INSERT, UPDATE ON audit.deferred_requests TO audit_writer;
+
+-- W1 ticket watcher (Story 5.5): one record per (ticket, workflow), so a ticket
+-- is never started twice. state: dispatched (run started), deferred (the gate
+-- kept it on the waiting list), blocked (the run ended blocked; retried later),
+-- done (its PR or run-outcome was seen). Not audit entries, so updatable.
+CREATE TABLE IF NOT EXISTS audit.w1_requests (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    ticket        text NOT NULL CHECK (ticket ~ '^[A-Z][A-Z0-9]+-[0-9]+$'),
+    workflow      text NOT NULL CHECK (workflow IN ('draft-cases', 'generate-tests')),
+    state         text NOT NULL CHECK (state IN ('dispatched', 'deferred', 'blocked', 'done')),
+    dispatched_at timestamptz,
+    run_id        bigint,
+    pr_url        text NOT NULL DEFAULT '',
+    attempts      integer NOT NULL DEFAULT 1,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (ticket, workflow)
+);
+REVOKE ALL ON audit.w1_requests FROM PUBLIC, audit_writer;
+GRANT SELECT, INSERT, UPDATE ON audit.w1_requests TO audit_writer;

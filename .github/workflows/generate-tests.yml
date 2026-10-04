@@ -14,6 +14,8 @@
 # GitHub Free: no `agent` Environment yet (see draft-cases.yml and docs/runbook.md).
 
 name: generate-tests
+# W1 finds the run it started by this title.
+run-name: generate-tests ${{ inputs.ticket }}
 
 on:
   workflow_dispatch:
