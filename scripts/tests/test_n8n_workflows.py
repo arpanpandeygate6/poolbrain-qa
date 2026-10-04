@@ -944,3 +944,138 @@ def test_w2_starts_triage_only_through_the_gate():
     start = next(n for n in W2["nodes"] if n["name"] == "Start triage")
     assert "triage.yml/dispatches" in start["parameters"]["url"] and "ref: 'main'" in start["parameters"]["jsonBody"]
     assert W2["settings"]["errorWorkflow"] == W0["id"]
+
+
+# ---------------------------------------------------------------- W3 Triage poster (Story 6.3, part 2)
+
+W3 = workflow("w3-triage-poster.json")
+FAILURE_LIST = json.loads((ROOT / "contracts" / "samples" / "failure-list.sample.json").read_text())
+# A triage result for the sample failure list's own tests: the first a product
+# defect, the second flaky, any others not classified.
+TRIAGE = {"schema_version": 1, "nightly_run_id": FAILURE_LIST["nightly_run_id"], "failures": [
+    {"test_id": FAILURE_LIST["failures"][0]["test_id"], "class": "product_defect",
+     "evidence": "API returned 500 on job create.", "bug_title": "Job create returns 500 when the route is empty"},
+    {"test_id": FAILURE_LIST["failures"][1]["test_id"], "class": "flaky", "evidence": "Passed on retry tonight."},
+]}
+
+
+def open_request(nid="7", state="dispatched", minutes_ago=10, posted=(), queue_reason=None, post_wait_until=None):
+    return {"nightly_run_id": nid, "state": state, "posted": list(posted), "dispatched_at": iso(minutes_ago),
+            "created_at": iso(minutes_ago), "queue_reason": queue_reason, "post_wait_until": post_wait_until}
+
+
+def w3_decide(requests, finished=(), outcomes=()):
+    nodes = {"Open requests": {"requests": list(requests)}}
+    if finished:
+        nodes["Finished runs"] = list(finished)
+        nodes["Read outcome"] = [{"found": o is not None, "data": o} for o in outcomes]
+    return run_code(code_of(W3, "Decide"), {}, nodes)
+
+
+def test_w3_vocabulary_copies_match():
+    code = code_of(W3, "Messages")
+    for key, word in VOCABULARY["triage_class"].items():
+        assert f"{key}: '{word}'" in code
+    for key in ("bug", "flaky", "environment", "ignore", "undo"):
+        reaction = VOCABULARY["reactions"][key]
+        assert f"{reaction['emoji']} {reaction['label'] if key != 'undo' else 'Undo within 24 h'}" in code
+
+
+@needs_node
+def test_w3_decides_classified_fallback_or_wait():
+    finished = [{"nightly_run_id": "7", "triage_run_id": "70"}]
+    [d] = w3_decide([open_request()], finished, [{"status": "ok"}])
+    assert (d["mode"], d["triage_run_id"], d["reason"]) == ("classified", "70", "")
+    [d] = w3_decide([open_request()], finished, [{"status": "error", "reason": "invalid-triage"}])
+    assert (d["mode"], d["reason"]) == ("fallback", "invalid-triage")
+    [d] = w3_decide([open_request()], finished, [{"status": "capped", "reason": "daily-cap-reached"}])
+    assert (d["mode"], d["reason"]) == ("fallback", "capped")
+    [d] = w3_decide([open_request()], finished, [None])
+    assert d["reason"] == "no-run-outcome"
+    assert w3_decide([open_request(minutes_ago=30)]) == []  # still running
+    [d] = w3_decide([open_request(minutes_ago=61)])
+    assert (d["mode"], d["reason"]) == ("fallback", "no-triage-run")
+
+
+@needs_node
+def test_w3_deferred_and_gate_back_off():
+    assert w3_decide([open_request(state="deferred", minutes_ago=30, queue_reason="capped")]) == []
+    [d] = w3_decide([open_request(state="deferred", minutes_ago=61, queue_reason="capped")])
+    assert (d["mode"], d["reason"]) == ("fallback", "capped")
+    later = datetime.fromtimestamp(datetime.now(UTC).timestamp() + 600, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert w3_decide([open_request(minutes_ago=61, post_wait_until=later)]) == []
+
+
+def w3_messages(night, failure_list=FAILURE_LIST, triage=TRIAGE):
+    reads = [{"found": failure_list is not None, "data": failure_list}]
+    if night["mode"] == "classified":
+        reads.append({"found": triage is not None, "data": triage})
+    nodes = {"Settings": {"repo": "o/r"}, "Read artifacts": reads, "Allowed nights": [night]}
+    return run_code(code_of(W3, "Messages"), {}, nodes)
+
+
+def night_of(mode="classified", posted=(), reason="", triage_run_id="70"):
+    return {"nightly_run_id": str(FAILURE_LIST["nightly_run_id"]), "mode": mode, "posted": list(posted),
+            "reason": reason, "triage_run_id": triage_run_id}
+
+
+@needs_node
+def test_w3_classified_replies():
+    msgs = w3_messages(night_of())
+    assert len(msgs) == len(FAILURE_LIST["failures"])
+    assert all(m["thread_ts"] == FAILURE_LIST["slack_ts"] for m in msgs)
+    by_test = {m["test_id"]: m for m in msgs}
+    classified = [m for m in msgs if m["class"]]
+    assert [m["class"] for m in classified] == ["product_defect", "flaky"]
+    for m in classified:
+        triage = next(f for f in TRIAGE["failures"] if f["test_id"] == m["test_id"])
+        assert m["header"] == f"Class: {VOCABULARY['triage_class'][triage['class']]} (suggested)"
+        assert f"Why: {triage['evidence']}" in m["body"]
+        assert m["legend"].endswith("↩️ Undo within 24 h. Reply appears in about 2 minutes.")
+        if triage["class"] == "product_defect":
+            assert f'Drafted bug: "{triage["bug_title"]}"' in m["body"] and m["todo"].endswith("Suggested: 🐞 Bug.")
+    unclassified = [m for t, m in by_test.items() if not m["class"]]
+    assert all(m["header"] == "Not classified" and m["legend"] for m in unclassified)
+    assert [link["label"] for link in msgs[0]["links"]] == ["Run", "Allure report"]
+
+
+@needs_node
+def test_w3_fallback_posts_s3_first_then_every_failure():
+    msgs = w3_messages(night_of("fallback", reason="capped"))
+    assert msgs[0]["key"] == "s3" and msgs[0]["header"] == "Classification didn't run for last night's failures."
+    assert msgs[0]["body"] == "Reason: the agent's daily limit for triage is reached (`capped`)."
+    assert msgs[0]["todo"].endswith("The gate is unchanged.") and msgs[0]["legend"] == ""
+    assert [m["key"] for m in msgs[1:]] == [f"test:{f['test_id']}" for f in FAILURE_LIST["failures"]]
+    assert all(m["header"] == "Not classified" for m in msgs[1:])
+
+
+@needs_node
+def test_w3_retry_skips_what_was_posted_and_long_lists_shorten_ids():
+    first = FAILURE_LIST["failures"][0]["test_id"]
+    msgs = w3_messages(night_of("fallback", posted=["s3", f"test:{first}"], reason="capped"))
+    assert "s3" not in [m["key"] for m in msgs] and f"test:{first}" not in [m["key"] for m in msgs]
+    many = {**FAILURE_LIST, "failures": [{**FAILURE_LIST["failures"][0], "test_id": f"api:tests/t.py::test_{i:02d}"} for i in range(12)]}
+    msgs = w3_messages(night_of("fallback", reason="capped"), failure_list=many)
+    assert len(msgs) == 13 and msgs[1]["body"].startswith("`test_00` — flow")
+    assert w3_messages(night_of(), failure_list=None) == []
+
+
+@needs_node
+def test_w3_remembers_what_went_out_and_fails_on_the_rest():
+    messages = [{"key": "test:a", "nightly_run_id": "7"}, {"key": "test:b", "nightly_run_id": "7"}]
+    code = code_of(W3, "Posted rows").replace("$input.all()", json.dumps(
+        [{"json": {"posted": True, "channel": "C1", "ts": "1.2"}}, {"json": {"posted": False, "error": "x"}}]))
+    out = run_code(code, {}, {"Messages": messages})
+    assert [(o["key"], o["ts"]) for o in out] == [("test:a", "1.2")]
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_code(code_of(W3, "All posted?"), {}, {"Post": [{"posted": True}, {"posted": False, "error": "not_in_channel"}],
+                                                   "Allowed nights": [{"nightly_run_id": "7"}]})
+    assert "1 triage message(s) not posted: not_in_channel" in failure.value.stderr
+    assert run_code(code_of(W3, "All posted?"), {}, {"Allowed nights": [{"nightly_run_id": "7"}]}) == [{"nightly_run_id": "7"}]
+
+
+def test_w3_posting_is_gated():
+    assert W3["connections"]["To the gate"]["main"][0][0]["node"] == "Gate"
+    gate_input = next(n for n in W3["nodes"] if n["name"] == "To the gate")["parameters"]["jsCode"]
+    assert "action: 'triage-post'" in gate_input
+    assert W3["settings"]["errorWorkflow"] == W0["id"]

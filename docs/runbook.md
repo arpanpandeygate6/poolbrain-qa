@@ -473,6 +473,7 @@ cd n8n
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w1TicketWatch001
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w1FollowUp000001
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w2NightlyWatch01
+docker compose run --rm --no-deps -T n8n publish:workflow --id=w3TriagePoster01
 docker compose run --rm --no-deps -T n8n unpublish:workflow --id=readyNotice00001
 docker compose restart n8n
 ```
@@ -498,7 +499,26 @@ At most one triage per nightly run. W2 is installed but **switched off**, with W
 
 **Checked on 4 Oct 2026:** the shared step read the real `nightly-summary` of the latest nightly run (status `passed`), and gave `found: false` for a name that doesn't exist. W2 ran against the real runs: no failed nightly in the last 36 hours, so it did nothing.
 
-**Next (Story 6.3, part 2): W3**, which posts each failure's class as a reply under the failure list (S2), or a fallback (S3, plus one unclassified message per failure) when triage didn't run.
+### W3 Triage poster (Story 6.3, part 2)
+
+"W3 Triage poster" (`n8n/workflows/w3-triage-poster.json`) runs every 5 minutes. For each night W2 started (or the gate kept back), it finds the triage run by its title (`triage <nightly run ID>`) and decides:
+- **Classified**, when triage ended `ok`: one reply per failure in the failure list's Slack thread (S2): "Class: <class> (suggested)", the test and its flow, "Why:" with the evidence, "Drafted bug:" for product defects, the suggested reaction ("check the run, then react. Suggested: 🐞 Bug."), the links Run · Allure report, and the legend "React: 🐞 Bug (file in Jira, you are Reporter) · 🔁 Flaky (quarantine PR) · 🌩️ Environment · 🙈 Ignore (reply with a reason) · ↩️ Undo within 24 h. Reply appears in about 2 minutes." A failure triage left out gets an unclassified message.
+- **Fallback**, when triage failed, was blocked or capped, didn't say how it ended, didn't finish within 60 minutes of the start, or the gate kept it back for 60 minutes. First S3 in the thread: "Classification didn't run for last night's failures.", the reason, "work from the list above. A QA member can run triage in Claude Code on a laptop. The gate is unchanged." and the triage run link. Then one unclassified message per failure with the same legend, so reactions still work.
+- Otherwise it waits.
+
+**Rules:**
+- Posting is a gated action. While AI work is off, the gate holds it back and W3 asks again after 15 minutes.
+- More than 10 failures still give one message each; the test ID is shortened to its last part.
+- W3 never edits the failure list itself.
+- Each message is remembered as soon as it goes out (`posted` on the night), so if Slack fails halfway, the run fails (W0 alerts) and the retry posts only the rest.
+- Every failure message that really posted gets a row in `audit.message_map` (kind `failure`, channel, ts, test, nightly run, suggested class), which reactions (Story 6.4) use.
+- The night is then `posted` or `fallback`, with an audit entry.
+
+**Turning on the "classifying" line:** when triage goes live, set the repository variable `TRIAGE_LIVE` = `true`. The failure list then says "The agent is classifying these. Results appear in this thread." (Story 2.4).
+
+**Needs Slack to be real:** replies go in the failure list's thread, which exists only once Slack is set up. Until then, everything is a preview.
+
+**Checked on 4 Oct 2026:** unit tests cover every decision and both message kinds, retries that skip what was already posted, and shortened IDs. Live: a made-up open request for the real latest nightly run, "started" 61 minutes earlier, was put on the fallback. The real gate refused posting (AI off) and held it back for 15 minutes, so nothing was posted. The test data was removed.
 
 ## Ready-for-QA notice (Story 5.7)
 

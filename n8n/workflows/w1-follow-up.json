@@ -415,6 +415,7 @@
             "todo": "={{ $json.todo }}",
             "todo_label": "={{ $json.todo_label }}",
             "links": "={{ $json.links }}",
+            "legend": "={{ $json.legend }}",
             "thread_ts": "={{ $json.thread_ts }}"
           },
           "matchingColumns": [],
@@ -477,6 +478,16 @@
               "display": true,
               "canBeUsedToMatch": true,
               "type": "array",
+              "removed": false
+            },
+            {
+              "id": "legend",
+              "displayName": "legend",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
               "removed": false
             },
             {

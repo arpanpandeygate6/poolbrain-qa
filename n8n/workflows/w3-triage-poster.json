@@ -1,0 +1,973 @@
+{
+  "id": "w3TriagePoster01",
+  "name": "W3 Triage poster",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "w0ErrorHandler1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000001",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000002",
+      "name": "Run now",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        160
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000003",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c3b2c3d4-0001-4000-8000-000000000301",
+              "name": "repo",
+              "value": "arpanpandeygate6/poolbrain-qa",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000004",
+      "name": "Open requests",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Triage requests not yet posted, what was already posted for each, why the\n-- gate kept triage back, and when W3 may ask the gate about posting again.\nSELECT coalesce(json_agg(json_build_object(\n         'nightly_run_id', t.nightly_run_id::text, 'state', t.state, 'posted', t.posted,\n         'dispatched_at', to_char(t.dispatched_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\n         'created_at', to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\n         'queue_reason', (SELECT d.reason FROM audit.deferred_requests d WHERE d.action = 'dispatch' AND d.workflow = 'triage'\n                            AND d.target = t.nightly_run_id::text AND d.done_at IS NULL LIMIT 1),\n         'post_wait_until', (SELECT to_char(d.not_before AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM audit.deferred_requests d\n                               WHERE d.action = 'triage-post' AND d.target = t.nightly_run_id::text AND d.done_at IS NULL LIMIT 1)\n       ) ORDER BY t.nightly_run_id), '[]') AS requests\nFROM audit.triage_requests t WHERE t.state IN ('dispatched', 'deferred');",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000005",
+      "name": "Dispatched",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "const open = $('Open requests').first().json;\nconst requests = Array.isArray(open.requests) ? open.requests : JSON.parse(open.requests || '[]');\nreturn requests.filter((r) => r.state === 'dispatched' && r.dispatched_at)\n  .map((r) => ({ json: { ...r, since: new Date(Date.parse(r.dispatched_at) - 120000).toISOString().slice(0, 19) + 'Z' } }));\n"
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000006",
+      "name": "List triage runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/workflows/triage.yml/runs?event=workflow_dispatch&per_page=20&created=%3E%3D{{ $json.since }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000007",
+      "name": "Finished runs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// The triage run W2 started has the title \"triage <nightly run ID>\".\nconst requests = $('Dispatched').all();\nreturn $input.all().flatMap((page, i) => {\n  const r = requests[i].json;\n  const run = (page.json.workflow_runs ?? [])\n    .filter((w) => w.display_title === `triage ${r.nightly_run_id}` && w.created_at >= r.since)\n    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];\n  return run && run.status === 'completed'\n    ? [{ json: { nightly_run_id: r.nightly_run_id, triage_run_id: String(run.id), repo: $('Settings').first().json.repo,\n      run_id: String(run.id), name: 'run-outcome' } }]\n    : [];\n});\n"
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000008",
+      "name": "Read outcome",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        -200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "ghReadArtifact01",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "repo": "={{ $json.repo }}",
+            "run_id": "={{ $json.run_id }}",
+            "name": "={{ $json.name }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "repo",
+              "displayName": "repo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000009",
+      "name": "Decide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Which nights to post now: classified (triage ended ok) or the fallback (it\n// failed, was blocked or capped, or no run finished within 60 minutes of the\n// start, or the gate kept it back for 60 minutes). Others wait.\nconst WAIT_MS = 60 * 60000;\nconst now = Date.now();\nconst open = $('Open requests').first().json;\nconst requests = Array.isArray(open.requests) ? open.requests : JSON.parse(open.requests || '[]');\nconst finished = $('Finished runs').isExecuted ? $('Finished runs').all().map((i) => i.json) : [];\nconst outcomes = $('Read outcome').isExecuted ? $('Read outcome').all().map((i) => i.json) : [];\nconst result = {};\nfinished.forEach((f, i) => { result[f.nightly_run_id] = { triage_run_id: f.triage_run_id, outcome: outcomes[i]?.found ? outcomes[i].data : null }; });\n\nreturn requests.flatMap((r) => {\n  if (r.post_wait_until && Date.parse(r.post_wait_until) > now) return [];  // the gate said \"not now\" to posting\n  const base = { nightly_run_id: r.nightly_run_id, posted: Array.isArray(r.posted) ? r.posted : JSON.parse(r.posted || '[]') };\n  if (r.state === 'dispatched') {\n    const done = result[r.nightly_run_id];\n    if (done) {\n      const o = done.outcome;\n      if (o && o.status === 'ok') return [{ json: { ...base, mode: 'classified', triage_run_id: done.triage_run_id, reason: '' } }];\n      return [{ json: { ...base, mode: 'fallback', triage_run_id: done.triage_run_id,\n        reason: o ? (o.status === 'error' ? (o.reason || 'error') : o.status === 'blocked' ? (o.reason || 'blocked') : o.status) : 'no-run-outcome' } }];\n    }\n    if (now - Date.parse(r.dispatched_at) > WAIT_MS) return [{ json: { ...base, mode: 'fallback', triage_run_id: '', reason: 'no-triage-run' } }];\n    return [];\n  }\n  // deferred: the gate kept triage back (AI work off, or the triage limit)\n  if (now - Date.parse(r.created_at) > WAIT_MS) {\n    return [{ json: { ...base, mode: 'fallback', triage_run_id: '', reason: r.queue_reason === 'capped' ? 'capped' : (r.queue_reason || 'not-started') } }];\n  }\n  return [];\n});\n"
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000010",
+      "name": "To the gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        100
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().map((d) => ({ json: { action: 'triage-post', workflow: '', target: d.json.nightly_run_id,\n  payload: { nightly_run_id: d.json.nightly_run_id } } }));\n"
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000011",
+      "name": "Gate",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1000,
+        100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "gateCheck0000001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "action": "={{ $json.action }}",
+            "workflow": "={{ $json.workflow }}",
+            "target": "={{ $json.target }}",
+            "payload": "={{ $json.payload }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "payload",
+              "displayName": "payload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "object",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000012",
+      "name": "Allowed nights",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Posting is a gated action (AR-11): only the nights the gate allows.\nconst decided = $('Decide').all();\nreturn $input.all().flatMap((answer, i) => (answer.json.allowed === true ? [decided[i]] : []));\n"
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000013",
+      "name": "What to read",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// For each night: its failure-list (the S1 thread and the failures) and, when\n// classified, the triage result.\nconst repo = $('Settings').first().json.repo;\nreturn $input.all().flatMap((d) => [\n  { json: { repo, run_id: d.json.nightly_run_id, name: 'failure-list' } },\n  ...(d.json.mode === 'classified' ? [{ json: { repo, run_id: d.json.triage_run_id, name: 'triage' } }] : []),\n]);\n"
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000014",
+      "name": "Read artifacts",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1600,
+        100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "ghReadArtifact01",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "repo": "={{ $json.repo }}",
+            "run_id": "={{ $json.run_id }}",
+            "name": "={{ $json.name }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "repo",
+              "displayName": "repo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000015",
+      "name": "Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// S2 (one per failure, classified), or S3 then one unclassified failure\n// message per failure (EXPERIENCE.md M2, M3). All are replies in the S1\n// thread. Anything already posted for a night (a retry) is skipped.\n\n// Words copied from contracts/vocabulary.json (triage_class and reactions);\n// scripts/tests/test_n8n_workflows.py checks the copy.\nconst CLASS = { product_defect: 'Product defect', test_defect: 'Test defect', environment: 'Environment', flaky: 'Flaky', unknown: 'Unknown' };\nconst STATUS = { failed: 'FAILED', quarantined: 'QUARANTINED', 'passed-on-retry': 'PASSED ON RETRY' };\nconst LEGEND = 'React: 🐞 Bug (file in Jira, you are Reporter) · 🔁 Flaky (quarantine PR) · 🌩️ Environment · '\n  + '🙈 Ignore (reply with a reason) · ↩️ Undo within 24 h. Reply appears in about 2 minutes.';\nconst SUGGESTED = {\n  product_defect: 'check the run, then react. Suggested: 🐞 Bug.',\n  flaky: 'check the run, then react. Suggested: 🔁 Flaky.',\n  environment: 'check the run, then react. Suggested: 🌩️ Environment.',\n  test_defect: 'fix the test (the healer in Claude Code on a laptop can help), or react.',\n  unknown: 'look at the run, then react.',\n};\nconst WHY = {\n  capped: \"the agent's daily limit for triage is reached\",\n  disabled: 'AI work is off', 'agent-enabled-off': 'AI work is off',\n  'no-triage-input': \"the masked failure details weren't saved\",\n  'agent-failed': 'the triage run failed', 'agent-not-set-up': \"the agent isn't set up yet\",\n  'invalid-triage': \"the classification didn't pass its checks\",\n  'no-triage-run': 'no triage run finished within 60 minutes',\n  'no-run-outcome': \"the triage run didn't say how it ended\",\n  'not-started': \"triage wasn't started\",\n};\n\nconst repo = `https://github.com/${$('Settings').first().json.repo}`;\nconst reads = $('Read artifacts').all().map((i) => i.json);\nlet next = 0;\nreturn $('Allowed nights').all().flatMap((night) => {\n  const d = night.json;\n  const list = reads[next++];\n  const triage = d.mode === 'classified' ? reads[next++] : null;\n  if (!list?.found) return [];  // no failure-list: nothing to reply under\n  const fl = list.data;\n  const done = new Set(d.posted);\n  const runUrl = `${repo}/actions/runs/${fl.nightly_run_id}`;\n  const links = [{ label: 'Run', url: runUrl }, { label: 'Allure report', url: `${runUrl}#artifacts` }];\n  const shorten = fl.failures.length > 10;\n  const name = (id) => (shorten ? id.split('::').pop().split(' > ').pop() : id);\n  const classes = Object.fromEntries((triage?.found ? triage.data.failures : []).map((f) => [f.test_id, f]));\n  const out = [];\n  const base = { nightly_run_id: d.nightly_run_id, thread_ts: fl.slack_ts, todo_label: '', kind: '' };\n\n  if (d.mode === 'fallback' && !done.has('s3')) {\n    out.push({ ...base, key: 's3', test_id: '', class: '',\n      header: \"Classification didn't run for last night's failures.\",\n      body: `Reason: ${WHY[d.reason] ?? 'triage ended without a result'} (\\`${d.reason}\\`).`,\n      todo: 'work from the list above. A QA member can run triage in Claude Code on a laptop. The gate is unchanged.',\n      links: d.triage_run_id ? [{ label: 'Triage run', url: `${repo}/actions/runs/${d.triage_run_id}` }] : [], legend: '' });\n  }\n  for (const f of fl.failures) {\n    if (done.has(`test:${f.test_id}`)) continue;\n    const c = classes[f.test_id];\n    const where = `\\`${name(f.test_id)}\\` — flow \\`${f.flow_id || 'unknown'}\\``;\n    if (c) {\n      const lines = [where, `Why: ${c.evidence}`];\n      if (c.bug_title) lines.push(`Drafted bug: \"${c.bug_title}\"`);\n      out.push({ ...base, key: `test:${f.test_id}`, test_id: f.test_id, class: c.class,\n        header: `Class: ${CLASS[c.class]} (suggested)`, body: lines.join('\\n'), todo: SUGGESTED[c.class], links, legend: LEGEND });\n    } else {\n      out.push({ ...base, key: `test:${f.test_id}`, test_id: f.test_id, class: '',\n        header: 'Not classified', body: `${where}\\nStatus: ${STATUS[f.status] ?? f.status}.`,\n        todo: 'look at the run, then react.', links, legend: LEGEND });\n    }\n  }\n  return out.map((m) => ({ json: m }));\n});\n"
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000023",
+      "name": "Anything to post?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1900,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c3b2c3d4-0001-4000-8000-000000002301",
+              "leftValue": "={{ $json.header ?? '' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000016",
+      "name": "Post",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2000,
+        100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "todo_label": "={{ $json.todo_label }}",
+            "links": "={{ $json.links }}",
+            "legend": "={{ $json.legend }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "legend",
+              "displayName": "legend",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000017",
+      "name": "Posted rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// What went out (posted, or a preview while Slack isn't set up), to remember\n// it; failure messages that really posted also get a message mapping row.\nconst messages = $('Messages').all();\nreturn $input.all().map((r, i) => ({ json: { ...messages[i].json, ok: Boolean(r.json.posted || r.json.preview),\n  channel: r.json.channel ?? '', ts: r.json.ts ?? '', error: r.json.error ?? '' } })).filter((m) => m.json.ok);\n"
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000018",
+      "name": "Remember",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2400,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Remember the message for this night, and map a posted failure message.\nWITH remembered AS (\n  UPDATE audit.triage_requests SET posted = posted || to_jsonb($2::text), updated_at = now()\n  WHERE nightly_run_id = $1::bigint AND NOT posted ? $2\n  RETURNING nightly_run_id\n), mapped AS (\n  INSERT INTO audit.message_map (channel, ts, kind, test_id, nightly_run_id, class)\n  SELECT $3, $4, 'failure', $5, $1::bigint, $6 WHERE $4 <> '' AND $5 <> ''\n  ON CONFLICT (channel, ts) DO NOTHING\n  RETURNING id\n)\nSELECT (SELECT count(*) FROM remembered) AS remembered, (SELECT count(*) FROM mapped) AS mapped;",
+        "options": {
+          "queryReplacement": "={{ [$json.nightly_run_id, $json.key, $json.channel, $json.ts, $json.test_id, $json.class] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000019",
+      "name": "All posted?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Any message Slack didn't take fails the run (W0 alerts). What did go out is\n// remembered, so the retry posts only the rest.\nconst failed = ($('Post').isExecuted ? $('Post').all() : []).filter((r) => !r.json.posted && !r.json.preview);\nif (failed.length) throw new Error(`${failed.length} triage message(s) not posted: ${failed[0].json.error}`);\nreturn $('Allowed nights').all();\n"
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000020",
+      "name": "Save",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2400,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- The night is posted (classified) or fell back; the gate's posting request is done.\nWITH saved AS (\n  UPDATE audit.triage_requests\n  SET state = CASE WHEN $2 = 'classified' THEN 'posted' ELSE 'fallback' END,\n      triage_run_id = coalesce(nullif($3, '')::bigint, triage_run_id), reason = $4, updated_at = now()\n  WHERE nightly_run_id = $1::bigint\n  RETURNING nightly_run_id\n), dequeued AS (\n  UPDATE audit.deferred_requests SET done_at = now()\n  WHERE action = 'triage-post' AND target = $1 AND done_at IS NULL\n  RETURNING id\n)\nSELECT (SELECT count(*) FROM saved) AS saved;",
+        "options": {
+          "queryReplacement": "={{ [$json.nightly_run_id, $json.mode, $json.triage_run_id, $json.reason] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000021",
+      "name": "Audit fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        200
+      ],
+      "parameters": {
+        "jsCode": "return $('Allowed nights').all().map((d) => ({\n  json: {\n    actor: 'n8n:w3-triage-poster',\n    actor_type: 'n8n',\n    action: d.json.mode === 'classified' ? 'triage-posted' : 'triage-fallback-posted',\n    target: `nightly ${d.json.nightly_run_id}${d.json.reason ? ` (${d.json.reason})` : ''}`,\n    link: `https://github.com/${$('Settings').first().json.repo}/actions/runs/${d.json.nightly_run_id}`,\n  },\n}));\n"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000022",
+      "name": "Write audit entry",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2800,
+        200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Open requests",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Open requests": {
+      "main": [
+        [
+          {
+            "node": "Dispatched",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Decide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatched": {
+      "main": [
+        [
+          {
+            "node": "List triage runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List triage runs": {
+      "main": [
+        [
+          {
+            "node": "Finished runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finished runs": {
+      "main": [
+        [
+          {
+            "node": "Read outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide": {
+      "main": [
+        [
+          {
+            "node": "To the gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To the gate": {
+      "main": [
+        [
+          {
+            "node": "Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate": {
+      "main": [
+        [
+          {
+            "node": "Allowed nights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Allowed nights": {
+      "main": [
+        [
+          {
+            "node": "What to read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "What to read": {
+      "main": [
+        [
+          {
+            "node": "Read artifacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read artifacts": {
+      "main": [
+        [
+          {
+            "node": "Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Messages": {
+      "main": [
+        [
+          {
+            "node": "Anything to post?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to post?": {
+      "main": [
+        [
+          {
+            "node": "Post",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "All posted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post": {
+      "main": [
+        [
+          {
+            "node": "Posted rows",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "All posted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Posted rows": {
+      "main": [
+        [
+          {
+            "node": "Remember",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All posted?": {
+      "main": [
+        [
+          {
+            "node": "Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save": {
+      "main": [
+        [
+          {
+            "node": "Audit fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit fields": {
+      "main": [
+        [
+          {
+            "node": "Write audit entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

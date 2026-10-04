@@ -64,10 +64,10 @@ install workflows/audit-record-github-runs.json runRecorder00001
 install workflows/ready-for-qa-notice.json readyNotice00001
 install workflows/w4-daily-update.json w4DailyUpdate001
 install_with_channel workflows/w7-weekly-audit.json w7WeeklyAudit001
-# W1, its follow-up and W2 are installed but not switched on: switch them on only
+# W1, its follow-up, W2 and W3 are installed but not switched on: switch them on only
 # when AI work should start (docs/runbook.md, "W1 Ticket watcher"). Re-importing
 # switches them off.
-for w1 in w1-ticket-watcher w1-follow-up w2-nightly-watcher; do
+for w1 in w1-ticket-watcher w1-follow-up w2-nightly-watcher w3-triage-poster; do
   docker compose exec -T n8n sh -c 'cat > /tmp/w.json && n8n import:workflow --input=/tmp/w.json; s=$?; rm -f /tmp/w.json; exit $s' \
     < "workflows/$w1.json" 2>&1 | tail -1
 done
