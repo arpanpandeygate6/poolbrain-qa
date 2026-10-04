@@ -327,6 +327,24 @@ On a plan with branch protection, protect `main` and record here that an agent p
 
 **Checked on 4 Oct 2026 (unit tests only):** every decision above, including a run that ends `ok` with the PR link and an invalid key recorded as an empty ticket. The full run waits for the Story 4.4 setup.
 
+### `generate-tests` workflow (Story 4.6)
+
+**Actions → generate-tests → Run workflow** (on `main`), with the same two inputs as `draft-cases`. It runs the same first steps as `draft-cases`: hide the ticket text, check the key, the kill switch and daily limit, and whether the agent is set up. Then:
+1. **Cases must be merged.** If `cases/<KEY>.md` isn't on `main`, it ends before any model call: "Result: Blocked — cases for <KEY> are not merged on `main` yet. Merge PR 1; this retries on its own after that." (`blocked`, `cases-not-merged`). Blocked runs don't count toward the daily limit, and n8n W1 retries once the case file is merged. If PR 2 is already open, it ends `ok`, `already-open`, with that PR's link.
+2. **The agent** writes the tests following `/generate-api-tests`. Its tools are file tools plus the flow-tag linter, pytest collection, the type check and `ruff`. It **can't run the tests**: the job has no UAT, database or Slack settings. If it can't automate a case with the existing helpers, it changes nothing and the run ends `blocked` (`cannot-automate` or `case-file-unusable`).
+3. **The check** (`scripts/agent_cases.py check --kind tests`) opens no PR and ends `error` if the agent:
+   - changed a workflow file under `.github/` or `flows/quarantine.yaml` (`forbidden-change`);
+   - added a skip, skipif, xfail, fixme or only, even the account guard some specs have (`weakened-test`);
+   - changed anything outside the test folders, the page objects, `api-tests/utils/api_client.py` and `flows/inventory.yaml`, or wrote no test (`invalid-output`);
+   - left the flow-tag linter, pytest collection or the type check failing (`invalid-output`).
+   Skips that were already on `main` aren't counted.
+4. **PR 2** is opened as `qa-agent` on `agent/<KEY>-tests` with the Tests template, so `ci` runs. It says "UAT: **not run yet.**" and that the tests haven't run anywhere. `uat-pr` stays expected but missing until a QA member who approved the PR starts it with the head commit SHA (Story 1.5).
+5. `run-outcome` is always saved; a model or token failure ends `error`, `agent-failed`, with the hint to run `/generate-api-tests` on a laptop.
+
+**The B6 exit check** (people, once the Story 4.4 setup exists): the QA lead runs `draft-cases` for one real ticket, merges PR 1, then runs `generate-tests`. Both must give reviewable PRs, and neither may push to `main` (see the GitHub Free gap under `draft-cases`).
+
+**Checked on 4 Oct 2026 (unit tests):** every decision above, using a small Git repository in the tests. The real flow-tag linter, collection and type check were also run on this repository through the check's own code, and passed.
+
 ## Kill switch and daily limits (Story 5.6)
 
 **Turning AI work off and on.** In GitHub: **Settings → Secrets and variables → Actions → Variables**, the repository variable `AGENT_ENABLED`. Only the exact value `true` lets AI work run. `false`, any other value, or no variable at all counts as off. Only people change it (the QA lead or n8n maintainer), never a workflow.

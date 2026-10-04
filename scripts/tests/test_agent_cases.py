@@ -194,3 +194,153 @@ def test_workflow_never_pushes_to_main_and_pins_its_actions():
     assert 'show_full_output: "false"' in text
     for tool in ("WebFetch", "WebSearch"):
         assert tool in text.split("--disallowedTools", 1)[1].splitlines()[0]
+
+
+# ---------------------------------------------------------------- generate-tests (Story 4.6)
+
+@pytest.fixture
+def merged(repo):
+    """main with PM-1234's cases merged, an existing API test, a UI spec and the quarantine list."""
+    write_cases(repo)
+    (repo / "api-tests" / "tests").mkdir(parents=True)
+    (repo / "api-tests" / "tests" / "test_old.py").write_text("def test_old():\n    assert True\n")
+    (repo / "ui-tests" / "tests").mkdir(parents=True)
+    (repo / "ui-tests" / "tests" / "old.spec.ts").write_text("test('old', async () => {});\n")
+    (repo / "flows" / "quarantine.yaml").write_text("[]\n")
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / ".github" / "workflows" / "ci.yml").write_text("name: ci\n")
+    for command in (["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "merged"]):
+        subprocess.run(["git", *command], cwd=repo, check=True)
+    return repo
+
+
+NEW_TEST = '''import pytest
+
+
+@pytest.mark.regression
+@pytest.mark.flow("job-creation")
+def test_api_job_without_route_is_rejected(logged_in_api):
+    """PM-1234-01: Job is rejected without a route."""
+
+
+def test_api_job_with_route_is_saved(logged_in_api):
+    """PM-1234-02: Job with a route is saved."""
+'''
+
+
+def test_tests_need_the_cases_on_main(run, repo):
+    agent_cases.precheck("PM-1234", "repo", repo, find_pr=lambda branch: "", kind="tests")
+    assert run.result == {"status": "blocked", "reason": "cases-not-merged", "pr_url": ""}
+    assert ("### generate-tests\n\nResult: Blocked — cases for PM-1234 are not merged on `main` yet. "
+            "Merge PR 1; this retries on its own after that.") in run.summary
+
+
+def test_blocked_runs_do_not_count_toward_the_cap():
+    assert "blocked" in agent_gate.EXCLUDED
+
+
+def test_tests_go_on_when_merged_and_no_pr_2(run, merged):
+    asked = []
+    agent_cases.precheck("PM-1234", "repo", merged, find_pr=lambda branch: asked.append(branch) or "", kind="tests")
+    assert asked == ["agent/PM-1234-tests"] and run.output == "go=true\n"
+
+
+def test_pr_2_already_open(run, merged):
+    agent_cases.precheck("PM-1234", "repo", merged, find_pr=lambda branch: "https://github.com/o/r/pull/3", kind="tests")
+    assert run.result == {"status": "ok", "reason": "already-open", "pr_url": "https://github.com/o/r/pull/3"}
+    assert "PR 2 for PM-1234 is already open" in run.summary
+
+
+def no_problems(root):
+    return []
+
+
+def test_good_tests_go_on(run, merged):
+    (merged / "api-tests" / "tests" / "test_route.py").write_text(NEW_TEST)
+    (merged / "flows" / "inventory.yaml").write_text(INVENTORY + "# mapped\n")
+    (merged / "api-tests" / "utils").mkdir()
+    (merged / "api-tests" / "utils" / "api_client.py").write_text("class ApiClient: ...\n")
+    assert agent_cases.check("PM-1234", merged, kind="tests", tools=no_problems) == 0
+    assert run.output == "go=true\n" and run.result is None
+
+
+@pytest.mark.parametrize(
+    "change, reason, shown",
+    [
+        (lambda r: (r / ".github" / "workflows" / "ci.yml").write_text("name: changed\n"), "forbidden-change",
+         "changes .github/workflows/ci.yml, which generate-tests must never change"),
+        (lambda r: (r / "flows" / "quarantine.yaml").write_text("- test_id: x\n"), "forbidden-change",
+         "changes flows/quarantine.yaml"),
+        (lambda r: (r / "api-tests" / "tests" / "test_route.py").write_text(NEW_TEST.replace("@pytest.mark.regression", "@pytest.mark.skip")),
+         "weakened-test", "adds skip, fixme or only: api-tests/tests/test_route.py: @pytest.mark.skip"),
+        (lambda r: (r / "ui-tests" / "tests" / "old.spec.ts").write_text("test('old', async () => {});\ntest.fixme('later', async () => {});\n"),
+         "weakened-test", "ui-tests/tests/old.spec.ts: test.fixme('later'"),
+        (lambda r: (r / "ui-tests" / "tests" / "new.spec.ts").write_text("test.skip(!email, 'no accounts');\n"),
+         "weakened-test", "test.skip(!email"),
+        (lambda r: (r / "api-tests" / "tests" / "test_route.py").write_text("pytestmark = pytest.mark.xfail\n"),
+         "weakened-test", "pytest.mark.xfail"),
+    ],
+)
+def test_forbidden_or_weakened_opens_no_pr(run, merged, change, reason, shown):
+    change(merged)
+    agent_cases.check("PM-1234", merged, kind="tests", tools=no_problems)
+    assert run.result == {"status": "error", "reason": reason, "pr_url": ""}
+    assert shown in run.summary and run.output == "go=false\n"
+
+
+def test_existing_skips_are_not_blamed_on_the_agent(run, merged):
+    old = merged / "ui-tests" / "tests" / "old.spec.ts"
+    old.write_text("test.skip(!email, 'no accounts');\n")
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "existing guard"], cwd=merged, check=True)
+    old.write_text("test.skip(!email, 'no accounts');\ntest('new', async () => {});\n")
+    assert agent_cases.check("PM-1234", merged, kind="tests", tools=no_problems) == 0
+    assert run.output == "go=true\n"
+
+
+@pytest.mark.parametrize(
+    "change, problem",
+    [
+        (lambda r: (r / "README.md").write_text("x"), "unexpected change: README.md"),
+        (lambda r: (r / "flows" / "inventory.yaml").write_text(INVENTORY + "#\n"), "no test was written"),
+        (lambda r: (r / "cases" / "PM-1234.md").write_text(GOOD + "\n"), "unexpected change: cases/PM-1234.md"),
+    ],
+)
+def test_other_changes_are_invalid(run, merged, change, problem):
+    change(merged)
+    agent_cases.check("PM-1234", merged, kind="tests", tools=no_problems)
+    assert run.result["reason"] == "invalid-output" and problem in run.summary
+
+
+def test_failing_tools_are_invalid(run, merged):
+    (merged / "api-tests" / "tests" / "test_route.py").write_text(NEW_TEST)
+    agent_cases.check("PM-1234", merged, kind="tests", tools=lambda root: ["type check failed: error TS2304"])
+    assert run.result["reason"] == "invalid-output" and "type check failed: error TS2304" in run.summary
+
+
+def test_tests_pr_body(merged):
+    (merged / "api-tests" / "tests" / "test_route.py").write_text(NEW_TEST)
+    (merged / "ui-tests" / "tests" / "old.spec.ts").write_text("test('old', async () => {});\ntest('new one', async () => {});\n")
+    (merged / "flows" / "inventory.yaml").write_text(INVENTORY + "# mapped\n")
+    title, body = agent_cases.tests_pr_body("PM-1234", merged)
+    assert title == "[PM-1234] Tests: Job creation with empty route"
+    assert "Tests for the merged cases in `cases/PM-1234.md` (3 tests)" in body
+    assert "- `api-tests/tests/test_route.py`: 2 tests, flow `job-creation`" in body
+    assert "- `ui-tests/tests/old.spec.ts`: 1 test, flow `job-creation`" in body
+    assert "- `flows/inventory.yaml`: the new tests mapped to business rules" in body
+    assert "UAT: **not run yet.** It runs only after a QA member reviews and starts it." in body
+    assert "2. Actions → `uat-pr` → Run workflow → paste this PR's head commit SHA." in body
+
+
+def test_tests_texts_point_to_the_right_command(run):
+    agent_cases.agent_failed("PM-1234", "tests")
+    assert "/generate-api-tests PM-1234" in run.summary and run.summary.startswith("### generate-tests")
+    agent_cases.opened("PM-1234", "https://github.com/o/r/pull/4", "tests")
+    assert "Next: review PR 2, then start `uat-pr` with its head commit SHA." in run.summary
+
+
+def test_generate_tests_workflow_pushes_only_its_branch():
+    text = (agent_cases.ROOT / ".github" / "workflows" / "generate-tests.yml").read_text()
+    assert 'branch="agent/$TICKET-tests"' in text and '"HEAD:refs/heads/$branch"' in text
+    assert "--kind tests" in text and "--kind cases" not in text
+    assert "anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea" in text
+    assert "secrets.UAT" not in text and "DB_PASSWORD" not in text
