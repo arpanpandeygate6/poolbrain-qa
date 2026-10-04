@@ -472,6 +472,7 @@ A notice that Slack doesn't take fails the run (W0 alerts) before anything is sa
 cd n8n
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w1TicketWatch001
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w1FollowUp000001
+docker compose run --rm --no-deps -T n8n publish:workflow --id=w2NightlyWatch01
 docker compose run --rm --no-deps -T n8n unpublish:workflow --id=readyNotice00001
 docker compose restart n8n
 ```
@@ -483,6 +484,21 @@ W1's first run then starts from that moment. **Decision (Story 5.7):** the Ready
 - A temporary copy with the gate replaced by "allowed" started `draft-cases` in GitHub for the made-up ticket `PM-0`. That run's shared first step stopped it as `disabled` (AI work off, no model call) and saved a `run-outcome` artifact with `ticket_key: PM-0`, which n8n read back. That is the full chain n8n → GitHub → first step → run-outcome, working.
 - The temporary workflows, the `PM-0` record and W1's checkpoint were removed afterwards. The audit entry for that start remains.
 - Part 2, the same day: a fresh `PM-0` start got the title "draft-cases PM-0". "W1 Follow-up" found that run, read its `disabled` outcome, marked the record `deferred` and put it back on the waiting list with its masked text. The real W1 then took it off the list and asked the real gate, which kept it waiting (AI off), so nothing started. That run showed two things, both fixed: the try counter rose although nothing had started (now only real starts count), and while AI is off every 5-minute poll audited a refusal (the gate now asks again after 15 minutes). The test data was removed afterwards.
+
+## Triage in n8n: W2 Nightly watcher (Story 6.3, part 1)
+
+"W2 Nightly watcher" (`n8n/workflows/w2-nightly-watcher.json`) starts triage on its own. Every 5 minutes:
+1. it lists `nightly` runs of the last 36 hours that **failed**, and keeps those with no triage request yet (`audit.triage_requests`, one per nightly run) and not already on the waiting list;
+2. of those, it keeps only runs whose report job saved a **`failure-list`**, which carries the Slack thread W3 replies in. **A `failure-list` exists only once Slack is set up** (Story 2.4), so until then W2 never starts triage;
+3. it asks the gate (kill switch and the `triage` limit) for the waiting list first, oldest first, then the new nights. If allowed, it starts `triage` on `main` with the nightly run's ID, records it as `dispatched`, takes it off the waiting list and writes an audit entry (`dispatch-triage`). If not, the gate keeps it on the waiting list and W2 records it as `deferred`.
+
+At most one triage per nightly run. W2 is installed but **switched off**, with W1 (see "Switching W1 on", which now switches W2 on too).
+
+**"GitHub: read artifact"** (`n8n/workflows/github-read-artifact.json`) is a shared sub-workflow. Given a repository, run ID and artifact name, it returns `{found, data}` with the JSON file inside, using the same two-step download as before (GitHub's storage rejects GitHub's login). W3 uses it.
+
+**Checked on 4 Oct 2026:** the shared step read the real `nightly-summary` of the latest nightly run (status `passed`), and gave `found: false` for a name that doesn't exist. W2 ran against the real runs: no failed nightly in the last 36 hours, so it did nothing.
+
+**Next (Story 6.3, part 2): W3**, which posts each failure's class as a reply under the failure list (S2), or a fallback (S3, plus one unclassified message per failure) when triage didn't run.
 
 ## Ready-for-QA notice (Story 5.7)
 

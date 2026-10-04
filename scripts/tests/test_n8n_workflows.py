@@ -891,3 +891,56 @@ def test_gate_asks_again_about_disabled_requests_after_15_minutes():
 def test_w1_counts_only_real_starts_as_tries():
     record = next(n for n in W1["nodes"] if n["name"] == "Record started")["parameters"]["query"]
     assert "attempts + CASE WHEN excluded.state = 'dispatched' THEN 1 ELSE 0 END" in record
+
+
+# ---------------------------------------------------------------- GitHub: read artifact, and W2 Nightly watcher (Story 6.3)
+
+READ = workflow("github-read-artifact.json")
+W2 = workflow("w2-nightly-watcher.json")
+
+
+@needs_node
+def test_read_artifact_picks_the_named_unexpired_one():
+    code = code_of(READ, "Has it?")
+    artifacts = {"artifacts": [{"name": "failure-list", "expired": True, "archive_download_url": "old"},
+                               {"name": "failure-list", "expired": False, "archive_download_url": "new"}]}
+    assert run_code(code, artifacts, {"Artifact": {"name": "failure-list"}}) == [{"url": "new"}]
+    assert run_code(code, {"artifacts": []}, {"Artifact": {"name": "failure-list"}}) == [{"url": ""}]
+    assert "errorWorkflow" not in READ["settings"]
+
+
+@needs_node
+def test_w2_candidates_are_new_failed_nights():
+    nodes = {
+        "Known requests": {"known": ["10"]},
+        "Due queue": {"due": json.dumps([{"queue_id": 3, "nightly_run_id": "11"}])},
+        "Failed nightlies": {"workflow_runs": [
+            {"id": 10, "status": "completed", "conclusion": "failure"},
+            {"id": 11, "status": "completed", "conclusion": "failure"},
+            {"id": 12, "status": "completed", "conclusion": "failure"},
+            {"id": 13, "status": "completed", "conclusion": "success"},
+            {"id": 14, "status": "in_progress", "conclusion": None},
+        ]},
+    }
+    assert run_code(code_of(W2, "Candidates"), {}, nodes) == [{"nightly_run_id": "12"}]
+
+
+@needs_node
+def test_w2_needs_a_failure_list_and_puts_the_waiting_list_first():
+    code = code_of(W2, "With failure-list").replace("$input.all()", json.dumps([
+        {"json": {"artifacts": [{"name": "failure-list", "expired": False}]}}, {"json": {"artifacts": []}}]))
+    assert run_code(code, {}, {"Candidates": [{"nightly_run_id": "12"}, {"nightly_run_id": "15"}]}) == [{"nightly_run_id": "12"}]
+    nodes = {"Due queue": {"due": [{"queue_id": 3, "nightly_run_id": "11"}]}, "With failure-list": [{"nightly_run_id": "12"}]}
+    out = run_code(code_of(W2, "Requests to try"), {}, nodes)
+    assert out == [
+        {"action": "dispatch", "workflow": "triage", "target": "11", "payload": {"nightly_run_id": "11"}, "queue_id": 3},
+        {"action": "dispatch", "workflow": "triage", "target": "12", "payload": {"nightly_run_id": "12"}, "queue_id": 0},
+    ]
+
+
+def test_w2_starts_triage_only_through_the_gate():
+    assert W2["connections"]["Anything to try?"]["main"][0][0]["node"] == "Gate"
+    assert W2["connections"]["Allowed?"]["main"][0][0]["node"] == "Start triage"
+    start = next(n for n in W2["nodes"] if n["name"] == "Start triage")
+    assert "triage.yml/dispatches" in start["parameters"]["url"] and "ref: 'main'" in start["parameters"]["jsonBody"]
+    assert W2["settings"]["errorWorkflow"] == W0["id"]

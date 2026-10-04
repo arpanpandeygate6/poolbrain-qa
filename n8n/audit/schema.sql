@@ -115,3 +115,35 @@ ALTER TABLE audit.w1_requests ADD CONSTRAINT w1_requests_state_check
 ALTER TABLE audit.deferred_requests DROP CONSTRAINT IF EXISTS deferred_requests_reason_check;
 ALTER TABLE audit.deferred_requests ADD CONSTRAINT deferred_requests_reason_check
     CHECK (reason IN ('disabled', 'capped', 'caps-invalid', 'retry'));
+
+-- Triage requests (Story 6.3): one per nightly run. W2 starts triage
+-- (dispatched) or the gate keeps it back (deferred); W3 posts the result
+-- (posted) or the fallback when triage didn't run (fallback).
+CREATE TABLE IF NOT EXISTS audit.triage_requests (
+    nightly_run_id bigint PRIMARY KEY,
+    state          text NOT NULL CHECK (state IN ('dispatched', 'deferred', 'posted', 'fallback')),
+    dispatched_at  timestamptz,
+    triage_run_id  bigint,
+    reason         text NOT NULL DEFAULT '',
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now()
+);
+REVOKE ALL ON audit.triage_requests FROM PUBLIC, audit_writer;
+GRANT SELECT, INSERT, UPDATE ON audit.triage_requests TO audit_writer;
+
+-- Slack messages people react to (Story 6.3 onwards): which message is about
+-- which test, so W3b knows what a reaction means. kind: failure or questions.
+CREATE TABLE IF NOT EXISTS audit.message_map (
+    id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    channel        text NOT NULL,
+    ts             text NOT NULL,
+    kind           text NOT NULL CHECK (kind IN ('failure', 'questions')),
+    test_id        text NOT NULL DEFAULT '',
+    ticket         text NOT NULL DEFAULT '',
+    nightly_run_id bigint,
+    class          text NOT NULL DEFAULT '',
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (channel, ts)
+);
+REVOKE ALL ON audit.message_map FROM PUBLIC, audit_writer;
+GRANT SELECT, INSERT ON audit.message_map TO audit_writer;

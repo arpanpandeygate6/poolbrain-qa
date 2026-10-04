@@ -52,6 +52,8 @@ install_with_channel() {  # install_with_channel <file> <id>
 }
 install_with_channel workflows/slack-post-message.json slackPostMsg0001
 install workflows/w0-error-handler.json w0ErrorHandler1
+# Reads one JSON artifact of a GitHub run; used by W2/W3 (Story 6.3).
+install workflows/github-read-artifact.json ghReadArtifact01
 # The kill-switch and daily-cap check every AI action calls first (Story 5.6).
 install workflows/gate-check.json gateCheck0000001
 
@@ -62,10 +64,10 @@ install workflows/audit-record-github-runs.json runRecorder00001
 install workflows/ready-for-qa-notice.json readyNotice00001
 install workflows/w4-daily-update.json w4DailyUpdate001
 install_with_channel workflows/w7-weekly-audit.json w7WeeklyAudit001
-# W1 and its follow-up are installed but not switched on: switch them on only
+# W1, its follow-up and W2 are installed but not switched on: switch them on only
 # when AI work should start (docs/runbook.md, "W1 Ticket watcher"). Re-importing
 # switches them off.
-for w1 in w1-ticket-watcher w1-follow-up; do
+for w1 in w1-ticket-watcher w1-follow-up w2-nightly-watcher; do
   docker compose exec -T n8n sh -c 'cat > /tmp/w.json && n8n import:workflow --input=/tmp/w.json; s=$?; rm -f /tmp/w.json; exit $s' \
     < "workflows/$w1.json" 2>&1 | tail -1
 done
