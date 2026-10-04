@@ -521,6 +521,7 @@ docker compose run --rm --no-deps -T n8n publish:workflow --id=w1FollowUp000001
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w2NightlyWatch01
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w3TriagePoster01
 docker compose run --rm --no-deps -T n8n publish:workflow --id=w6QuestionsPost1
+docker compose run --rm --no-deps -T n8n publish:workflow --id=w3bReactions0001
 docker compose run --rm --no-deps -T n8n unpublish:workflow --id=readyNotice00001
 docker compose restart n8n
 ```
@@ -583,6 +584,32 @@ Each run is posted at most once. W6 is installed but **switched off** with W1 (s
 **Checked on 5 Oct 2026:**
 - Unit tests: the contract copy agrees with the Python validator, plus the states, the message, the saved rows and the error report.
 - Live: W6 found the two real `draft-cases` runs (the `PM-0` tests) and recorded both as `none`, since they stopped before drafting and had no questions.
+
+## W3b Reactions (Story 6.4, part 1: reading reactions, 🌩️ and 🙈)
+
+"W3b Reactions" (`n8n/workflows/w3b-reactions.json`) runs every 2 minutes, **one run at a time**: a lock in `audit.relay_state` (`w3b-lock`), released at the end. A run that dies leaves the lock to expire after 5 minutes. With no Slack channel set, it does nothing.
+
+**What counts:**
+- only messages in `audit.message_map` up to **7 days old**, and only the **first valid reaction** Slack lists for each:
+  - on `failure` messages: 🐞 Bug, 🔁 Flaky, 🌩️ Environment, 🙈 Ignore;
+  - on `questions` messages: ✅ Approve;
+  - ↩️ Undo is handled separately (Story 6.8);
+- only reactions from the **QA group**, set in `n8n/.env` and filled in by `n8n/slack-setup.sh`:
+  - `SLACK_QA_GROUP`, a Slack user group ID. User groups need a paid Slack plan;
+  - and/or `SLACK_QA_MEMBERS`, a comma-separated list of member IDs (in Slack: a profile → ⋮ → Copy member ID). This works on any plan.
+
+Everything else is ignored with no reply: other emoji, people outside the group, older messages, second reactions. Removing a reaction undoes nothing. Slack names each emoji (🐞 is `lady_beetle` or `ladybug`); the names are in `contracts/vocabulary.json` (`slack_names`), and W3b's copy is checked by a test.
+
+**Decisions** (`audit.reaction_decisions`, at most one live decision per message; never deleted):
+- **🌩️ Environment:** recorded, with a thread reply: "<@member> marked this failure 🌩️ Environment. The gate is unchanged. This will show in the daily update." and "↩️ within 24 h to undo". Nothing goes to Jira. Audit entry with the member's email as actor.
+- **🙈 Ignore:** W3b asks once in the thread: "<@member>, to record 🙈 Ignore, reply in this thread with a short reason. Nothing is recorded until then." When that member's reply arrives, the reason is recorded and confirmed ('… Reason: "…". The gate is unchanged.'), with an audit entry.
+- **🐞 Bug, 🔁 Flaky, ✅ Approve** write to Jira. They come in the next part, and until then they stay unhandled (no reply).
+
+W3b needs the Slack app's `reactions:read`, `channels:history` (`groups:history` for a private channel), `usergroups:read`, `users:read` and `users:read.email` scopes, which are all in the manifest. A member whose email can't be read is recorded as `<member ID>@slack.invalid`. W3b is installed but **switched off** with W1.
+
+**Checked on 5 Oct 2026:**
+- Unit tests: the emoji names match the vocabulary; ten cases for the first valid reaction (wrong emoji, outsider, wrong message kind, skin tones, ↩️, nothing); the QA group from a user group or a list; the replies; and the 🙈 reason (only that member's reply after the prompt counts).
+- Live, without Slack: W3b stopped at "Slack set up?". Its lock (a second lock refused), the load query, the release, and recording a decision (a second reaction refused; a reason recorded once) were run against the real database. The test rows were deleted.
 
 ## Ready-for-QA notice (Story 5.7)
 

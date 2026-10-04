@@ -169,3 +169,29 @@ ALTER TABLE audit.message_map ADD COLUMN IF NOT EXISTS source_run_id bigint;
 ALTER TABLE audit.deferred_requests DROP CONSTRAINT IF EXISTS deferred_requests_action_check;
 ALTER TABLE audit.deferred_requests ADD CONSTRAINT deferred_requests_action_check
     CHECK (action IN ('dispatch', 'triage-post', 'questions-post', 'quarantine', 'jira-write'));
+
+-- W3b reactions (Story 6.4): the thread a mapped message is in (for reason
+-- replies), and one decision per handled reaction. A decision is never
+-- deleted: undo (Story 6.8) sets undone_at. state: handled, or
+-- waiting-for-reason (🙈 before its reason reply arrives).
+ALTER TABLE audit.message_map ADD COLUMN IF NOT EXISTS thread_ts text NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS audit.reaction_decisions (
+    id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    map_id       bigint NOT NULL REFERENCES audit.message_map (id),
+    action       text NOT NULL CHECK (action IN ('bug', 'flaky', 'environment', 'ignore', 'approve')),
+    state        text NOT NULL CHECK (state IN ('handled', 'waiting-for-reason')),
+    actor_id     text NOT NULL,
+    actor_email  text NOT NULL DEFAULT '',
+    actor_name   text NOT NULL DEFAULT '',
+    reason       text NOT NULL DEFAULT '',
+    jira_key     text NOT NULL DEFAULT '',
+    link         text NOT NULL DEFAULT '',
+    prompt_ts    text NOT NULL DEFAULT '',
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    handled_at   timestamptz,
+    undone_at    timestamptz
+);
+-- At most one live (not undone) decision per message.
+CREATE UNIQUE INDEX IF NOT EXISTS reaction_decisions_live ON audit.reaction_decisions (map_id) WHERE undone_at IS NULL;
+REVOKE ALL ON audit.reaction_decisions FROM PUBLIC, audit_writer;
+GRANT SELECT, INSERT, UPDATE ON audit.reaction_decisions TO audit_writer;
