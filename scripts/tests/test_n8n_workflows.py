@@ -8,6 +8,7 @@ without a running n8n.
 import json
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -28,11 +29,13 @@ def code_of(wf: dict, node_name: str) -> str:
 
 
 def run_code(code: str, input_json: dict, nodes: dict | None = None) -> list[dict]:
-    """Runs one Code node's code and returns the items' json."""
+    """Runs one Code node's code and returns the items' json. In `nodes`, a list
+    stands for several items of that node; a node left out did not run."""
     harness = f"""
 const NODES = {json.dumps(nodes or {})};
 const $input = {{ first: () => ({{ json: {json.dumps(input_json)} }}) }};
-const $ = (name) => ({{ first: () => ({{ json: NODES[name] }}) }});
+const items = (name) => [].concat(NODES[name]).map((json) => ({{ json }}));
+const $ = (name) => ({{ first: () => items(name)[0], all: () => items(name), isExecuted: name in NODES }});
 const out = (() => {{ {code} }})();
 console.log(JSON.stringify(out.map((i) => i.json)));
 """
@@ -258,3 +261,135 @@ def test_ready_notice_failed_post_gets_no_audit_entry_and_fails_the_run():
     with pytest.raises(subprocess.CalledProcessError) as failure:
         run_on_results("Check for failures", results)
     assert "Slack did not take the notice for PM-2: Slack said not_in_channel" in failure.value.stderr
+
+
+# ---------------------------------------------------------------- Gate: check (Story 5.6)
+
+GATE = workflow("gate-check.json")
+FIXTURE = json.loads((ROOT / "contracts" / "cap-count.fixture.json").read_text())
+
+
+@needs_node
+@pytest.mark.parametrize("case", FIXTURE["cases"], ids=[c["name"] for c in FIXTURE["cases"]])
+def test_cap_count_passes_the_shared_fixture(case):
+    rules = code_of(GATE, "Check cap").split("const workflow =")[0]
+    call = (f"return [{{ json: {{ count: countToday({json.dumps(case['runs'])}, new Date('{case['now']}'), "
+            f"{json.dumps(case['current_run_id'])}) }} }}];")
+    assert run_code(rules + call, {}) == [{"count": case["expected"]}]
+
+
+def check_cap(caps_value, runs=(), outcomes=None, workflow_name="draft-cases"):
+    nodes = {
+        "Gate input": {"workflow": workflow_name},
+        "Today's runs": {"workflow_runs": list(runs)},
+        "Read AGENT_CAPS": {"value": caps_value} if caps_value is not None else {"error": {"message": "404"}},
+    }
+    if outcomes is not None:
+        nodes["Read outcome"] = [{"data": o} for o in outcomes]
+    return run_code(code_of(GATE, "Check cap"), {}, nodes)[0]
+
+
+def today_run(run_id, status="completed"):
+    return {"id": run_id, "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"), "status": status}
+
+
+@needs_node
+def test_cap_reached_uses_outcomes_from_artifacts():
+    runs = [today_run(1), today_run(2), today_run(3, "in_progress")]
+    caps = json.dumps({"draft-cases": 2})
+    capped = check_cap(caps, runs, outcomes=[{"run_id": 1, "status": "ok"}])
+    assert capped["decision"] == "capped" and capped["count"] == 3 and capped["cap"] == 2
+    assert capped["not_before"].endswith("T18:30:00.000Z")
+    allowed = check_cap(caps, runs, outcomes=[{"run_id": 1, "status": "capped"}, {"run_id": 2, "status": "blocked"}])
+    assert allowed == {"decision": "ok", "cap": 2, "count": 1}
+
+
+@needs_node
+@pytest.mark.parametrize(
+    "caps_value, problem",
+    [
+        (None, "AGENT_CAPS is missing or not valid JSON"),
+        ("{not json", "AGENT_CAPS is missing or not valid JSON"),
+        ('{"triage": 2}', "AGENT_CAPS has no daily limit for draft-cases"),
+        ('{"draft-cases": "20"}', "AGENT_CAPS has no daily limit for draft-cases"),
+    ],
+)
+def test_broken_caps_count_as_cap_reached(caps_value, problem):
+    out = check_cap(caps_value)
+    assert out["decision"] == "caps-invalid" and out["problem"] == problem
+
+
+@needs_node
+@pytest.mark.parametrize(
+    "value, last, enabled, transition",
+    [
+        ("true", None, True, ""),
+        ("true", "false", True, "on"),
+        ("false", "true", False, "off"),
+        ("TRUE", None, False, "off"),
+        (None, "true", False, "off"),
+        ("false", "false", False, ""),
+    ],
+)
+def test_kill_switch(value, last, enabled, transition):
+    read = {"value": value} if value is not None else {"error": {"message": "404"}}
+    [out] = run_code(code_of(GATE, "Switch state"), {}, {"Read AGENT_ENABLED": read, "Read state": {"last_enabled": last}})
+    assert out["enabled"] is enabled and out["transition"] == transition
+    if transition == "off":
+        assert out["header"] == "AI work is off" and out["kind"] == "alert"
+        assert out["todo_label"] == "To turn it back on"
+        assert "Still running: nightly and smoke tests" in out["body"]
+    if transition == "on":
+        assert out["header"] == "AI work is on again" and out["kind"] == "info"
+
+
+@needs_node
+def test_s12_is_saved_only_after_the_notice_went_out():
+    nodes = {"Switch state": {"enabled": False}}
+    [out] = run_code(code_of(GATE, "S12 audit fields"), {"posted": False, "preview": True}, nodes)
+    assert out["action"] == "ai-work-off-notice" and out["actor"] == "n8n:gate-check"
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_code(code_of(GATE, "S12 audit fields"), {"posted": False, "error": "Slack said not_in_channel"}, nodes)
+    assert "S12 notice not posted" in failure.value.stderr
+
+
+@needs_node
+@pytest.mark.parametrize("sent_on, expected", [(None, True), ("2026-10-03", True), ("2026-10-04", False)])
+def test_s11_once_per_workflow_per_day(sent_on, expected):
+    nodes = {"Check cap": {"reason": "capped", "today": "2026-10-04", "cap": 20, "count": 20},
+             "Read state": {"s11_sent_on": sent_on}}
+    [out] = run_code(code_of(GATE, "Deferred"), {"id": 7}, nodes)
+    assert out["s11"] is expected and out["queued_id"] == 7
+
+
+@needs_node
+def test_s11_message():
+    nodes = {"Gate input": {"workflow": "draft-cases", "target": "PM-1240"}}
+    [out] = run_code(code_of(GATE, "S11 message"), {"cap": 20}, nodes)
+    assert out["kind"] == "info" and out["header"] == "Case drafting waits until tomorrow"
+    assert out["body"] == ("Today's limit of 20 case drafts is reached (counted since 00:00 IST).\n"
+                           "PM-1240 will be drafted after 00:00 IST.")
+    assert out["todo_label"] == "If urgent"
+    assert out["todo"].startswith("run /draft-cases in Claude Code on a laptop")
+
+
+@needs_node
+def test_disabled_requests_are_kept_and_not_allowed():
+    nodes = {"Disabled": {"reason": "disabled", "not_before": "2026-10-04T00:00:00Z", "audit_action": "gate-skipped-disabled"},
+             "Read state": {}}
+    [deferred] = run_code(code_of(GATE, "Deferred"), {"id": 3}, nodes)
+    assert deferred["s11"] is False
+    [out] = run_code(code_of(GATE, "Not allowed"), {}, {"Deferred": deferred})
+    assert out["allowed"] is False and out["reason"] == "disabled" and out["queued_id"] == 3
+
+
+@needs_node
+def test_broken_caps_fail_the_caller_so_w0_alerts():
+    deferred = {"reason": "caps-invalid", "problem": "AGENT_CAPS is missing or not valid JSON", "queued_id": 4}
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_code(code_of(GATE, "Not allowed"), {}, {"Deferred": deferred})
+    assert "AGENT_CAPS is missing or not valid JSON. Request kept until it is fixed (deferred request 4)." in failure.value.stderr
+
+
+def test_gate_is_a_helper_and_never_alerts_about_itself():
+    assert "errorWorkflow" not in GATE["settings"]

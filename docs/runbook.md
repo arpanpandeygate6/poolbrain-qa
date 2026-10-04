@@ -199,6 +199,33 @@ Nothing else changes: every workflow starts posting. Running `n8n/slack-setup.sh
 
 **Checked on 4 Oct 2026:** a throwaway scheduled workflow failed with an error containing a Slack token, an email, a URL query and a stack trace. W0 ran within a second and produced the preview "Alert: n8n workflow error in Throwaway W0 test / Step: call Jira. Error: Jira returned 403 for token [hidden] and [email] at https://x.atlassian.net/rest [line 1]. / Time: 04 Oct 20:59 IST.", with none of the secrets in the execution data, and wrote an `error-alert-preview` audit entry. The throwaway workflow was then deleted.
 
+## Kill switch and daily limits (Story 5.6)
+
+**Turning AI work off and on.** In GitHub: **Settings → Secrets and variables → Actions → Variables**, the repository variable `AGENT_ENABLED`. Only the exact value `true` lets AI work run. `false`, any other value, or no variable at all counts as off. Only people change it (the QA lead or n8n maintainer), never a workflow.
+
+**Daily limits.** The repository variable `AGENT_CAPS` holds each agent workflow's daily limit as JSON: `{"draft-cases": 20, "generate-tests": 20, "triage": 2, "quarantine": 5}`. Only the QA lead changes it. A missing or broken value, or a workflow with no entry, counts as "limit reached".
+
+**Stopping a run already in progress:** open it on the Actions tab and click **Cancel workflow**.
+
+**How n8n obeys them.** Before any AI action (starting an agent workflow, posting triage, asking for a quarantine, writing to Jira), an n8n workflow calls the shared sub-workflow **"Gate: check"** (`n8n/workflows/gate-check.json`) with `action` (`dispatch`, `triage-post`, `quarantine` or `jira-write`), `workflow` (for `dispatch`: the agent workflow, for example `draft-cases`), `target` (usually the ticket key) and `payload` (what is needed to do it later). It answers `allowed: true`, or `allowed: false` with the `reason` and the waiting-list entry. The caller acts only on `allowed: true`. W0, W5, audit writes and the audit export never call it.
+
+- **Off:** the request goes on the waiting list. The first skipped action after the switch goes off posts "Alert: AI work is off" (what stops, what still runs, how to turn it back on). The first action after it is back on posts "FYI: AI work is on again". Each goes out once per change, and the switch is read on every check, so everything stops within one polling cycle.
+- **Daily limit** (for `dispatch` only): it counts that workflow's runs created since 00:00 IST, leaving out runs whose `run-outcome` is `capped`, `disabled` or `blocked`. It reads that outcome from each run's `run-outcome` artifact. If the limit is reached, the request waits until after 00:00 IST, and "FYI: <work> waits until tomorrow" is posted once per workflow per day. The counting rule is shared with the agent side and tested against `contracts/cap-count.fixture.json`.
+- **Broken `AGENT_CAPS`:** the request waits, and the caller's run fails with the reason (for example "AGENT_CAPS has no daily limit for draft-cases"), so W0 alerts.
+- **Every skip or wait** is recorded in the audit log as `n8n:gate-check` (`gate-skipped-disabled`, `gate-deferred-capped`, `gate-deferred-caps-invalid`), and so is each notice.
+
+**The waiting list** is the table `audit.deferred_requests`: one open entry per action, workflow and ticket, in arrival order, with the time after which it may run (`not_before`). Asking again for the same open request only updates it. The switch state and notice days are in `audit.relay_state`. Both tables are created by `n8n/audit-setup.sh`.
+
+**Still to build with W1 (Story 5.5):** working through the waiting list (W1 picks up due entries in arrival order, asks the gate again and sets `done_at` once dispatched), and putting a request back on the list when an agent run ends `capped`. Nothing uses the gate yet: W1 is its first caller.
+
+**Not created yet:** `AGENT_ENABLED` and `AGENT_CAPS` (Story 4.4 has the QA lead create them). Until then the gate counts AI work as off, which is safe.
+
+**Checked on 4 Oct 2026:**
+- With `AGENT_ENABLED` missing, a request was refused and kept. "AI work is off" was previewed once, and asking again reused the same waiting-list entry.
+- In a temporary copy of the gate with the switch on and a limit of 1 for `nightly`, an allowed request posted "AI work is on again". Two capped requests were deferred to 05 Oct 00:00 IST with one "Nightly waits until tomorrow" notice. A workflow missing from the limits failed with the reason.
+- The artifact reading (find the download link, download without GitHub's login, unzip, read JSON) worked on a real nightly artifact. GitHub's storage rejects the GitHub login, so the download is done in two steps.
+- The temporary workflows and test waiting-list entries were deleted. The audit entries from the test remain, because the audit log is append-only.
+
 ## Ready-for-QA notice (Story 5.7)
 
 The n8n workflow "Ready-for-QA notice" (`n8n/workflows/ready-for-qa-notice.json`) is the early n8n demo: Jira, GitHub and Slack working together. It only reads Jira and GitHub; it never writes to Jira or starts a GitHub workflow.

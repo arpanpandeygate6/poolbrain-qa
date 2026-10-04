@@ -39,6 +39,10 @@
               "type": "string"
             },
             {
+              "name": "todo_label",
+              "type": "string"
+            },
+            {
               "name": "links",
               "type": "array"
             },
@@ -83,7 +87,7 @@
         0
       ],
       "parameters": {
-        "jsCode": "// Builds one Slack message in the shared anatomy (EXPERIENCE.md): header,\n// what happened, what to do, links. The plain `text` is the notification\n// fallback: header plus what to do.\n\n// Notice-kind words, copied from contracts/vocabulary.json (notice_kind).\n// scripts/tests/test_n8n_workflows.py checks that this copy still matches.\nconst NOTICE_KIND = { info: 'FYI', action: 'Action needed', alert: 'Alert' };\n\nconst m = $('Message').first().json;\nconst channel = $('Settings').first().json.slack_channel ?? '';\nconst links = (Array.isArray(m.links) ? m.links : []).filter((l) => l && l.url && l.label);\n\nconst prefix = NOTICE_KIND[m.kind];\nconst header = prefix ? `${prefix}: ${m.header}` : String(m.header ?? '');\nconst todo = m.todo ? `What to do: ${m.todo}` : '';\n\nconst blocks = [{ type: 'header', text: { type: 'plain_text', text: header.slice(0, 150) } }];\nif (m.body) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: m.body } });\nif (todo) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*What to do:* ${m.todo}` } });\nif (links.length) {\n  blocks.push({\n    type: 'context',\n    elements: [{ type: 'mrkdwn', text: links.map((l) => `<${l.url}|${l.label}>`).join(' · ') }],\n  });\n}\n\nconst text = todo ? `${header.replace(/\\.$/, '')}. ${todo}` : header;\nconst preview = [header, m.body, todo, links.map((l) => `${l.label}: ${l.url}`).join(' · ')]\n  .filter(Boolean)\n  .join('\\n');\n\nreturn [{ json: { channel, text, blocks, thread_ts: m.thread_ts || '', preview } }];\n"
+        "jsCode": "// Builds one Slack message in the shared anatomy (EXPERIENCE.md): header,\n// what happened, what to do, links. The plain `text` is the notification\n// fallback: header plus what to do. `todo_label` replaces \"What to do\" where\n// a message calls for it (for example \"If urgent\").\n\n// Notice-kind words, copied from contracts/vocabulary.json (notice_kind).\n// scripts/tests/test_n8n_workflows.py checks that this copy still matches.\nconst NOTICE_KIND = { info: 'FYI', action: 'Action needed', alert: 'Alert' };\n\nconst m = $('Message').first().json;\nconst channel = $('Settings').first().json.slack_channel ?? '';\nconst links = (Array.isArray(m.links) ? m.links : []).filter((l) => l && l.url && l.label);\n\nconst prefix = NOTICE_KIND[m.kind];\nconst header = prefix ? `${prefix}: ${m.header}` : String(m.header ?? '');\nconst label = m.todo_label || 'What to do';\nconst todo = m.todo ? `${label}: ${m.todo}` : '';\n\nconst blocks = [{ type: 'header', text: { type: 'plain_text', text: header.slice(0, 150) } }];\nif (m.body) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: m.body } });\nif (todo) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*${label}:* ${m.todo}` } });\nif (links.length) {\n  blocks.push({\n    type: 'context',\n    elements: [{ type: 'mrkdwn', text: links.map((l) => `<${l.url}|${l.label}>`).join(' · ') }],\n  });\n}\n\nconst text = todo ? `${header.replace(/\\.$/, '')}. ${todo}` : header;\nconst preview = [header, m.body, todo, links.map((l) => `${l.label}: ${l.url}`).join(' · ')]\n  .filter(Boolean)\n  .join('\\n');\n\nreturn [{ json: { channel, text, blocks, thread_ts: m.thread_ts || '', preview } }];\n"
       }
     },
     {

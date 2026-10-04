@@ -1,0 +1,1434 @@
+{
+  "id": "gateCheck0000001",
+  "name": "Gate: check",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000001",
+      "name": "Gate input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "action",
+              "type": "string"
+            },
+            {
+              "name": "workflow",
+              "type": "string"
+            },
+            {
+              "name": "target",
+              "type": "string"
+            },
+            {
+              "name": "payload",
+              "type": "object"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000002",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b8b2c3d4-0001-4000-8000-000000000201",
+              "name": "repo",
+              "value": "arpanpandeygate6/poolbrain-qa",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000003",
+      "name": "Read AGENT_ENABLED",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/variables/AGENT_ENABLED",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000004",
+      "name": "Read state",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        600,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT value FROM audit.relay_state WHERE name = 'agent_enabled') AS last_enabled,\n       (SELECT value FROM audit.relay_state WHERE name = 's11:' || $1) AS s11_sent_on;",
+        "options": {
+          "queryReplacement": "={{ [$('Gate input').first().json.workflow || ''] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000005",
+      "name": "Switch state",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// The kill switch (FR-24): only the exact value `true` lets AI work run. Any\n// other value, a missing variable or a failed read counts as off. A change\n// since the last check produces one S12 notice (UX-DR20).\nconst read = $('Read AGENT_ENABLED').first().json;\nconst enabled = read.value === 'true';\nconst last = $('Read state').first().json.last_enabled ?? 'true';\nconst transition = enabled && last === 'false' ? 'on' : !enabled && last === 'true' ? 'off' : '';\n\nconst notice = transition === 'off'\n  ? {\n    kind: 'alert',\n    header: 'AI work is off',\n    body: '`AGENT_ENABLED` is not `true`. The agent will not draft, generate, triage, quarantine or write to Jira.\\n'\n      + 'Still running: nightly and smoke tests, the failure list, heartbeat, error alerts, audit.',\n    todo: 'QA lead or n8n maintainer sets `AGENT_ENABLED` to `true`.',\n    todo_label: 'To turn it back on',\n  }\n  : { kind: 'info', header: 'AI work is on again', body: '`AGENT_ENABLED` is `true`.', todo: '', todo_label: '' };\n\nreturn [{ json: { enabled, transition, ...notice, links: [], thread_ts: '' } }];\n"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000006",
+      "name": "Switched?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b8b2c3d4-0001-4000-8000-000000000601",
+              "leftValue": "={{ $json.transition }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000007",
+      "name": "Post S12",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        -200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "todo_label": "={{ $json.todo_label }}",
+            "links": "={{ $json.links }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000008",
+      "name": "S12 audit fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// The notice must go out (or be previewed) before the new state is saved, so\n// a failed post is tried again on the next gated action.\nconst r = $input.first().json;\nconst s = $('Switch state').first().json;\nif (!r.posted && !r.preview) throw new Error(`S12 notice not posted: ${r.error}`);\nreturn [{\n  json: {\n    actor: 'n8n:gate-check',\n    actor_type: 'n8n',\n    action: s.enabled ? 'ai-work-on-notice' : 'ai-work-off-notice',\n    target: 'AGENT_ENABLED',\n    link: r.link || '',\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000009",
+      "name": "Write S12 audit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1600,
+        -200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000010",
+      "name": "Save switch state",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1800,
+        -200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit.relay_state (name, value) VALUES ('agent_enabled', $1)\nON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = now()\nRETURNING value;",
+        "options": {
+          "queryReplacement": "={{ [$('Switch state').first().json.enabled ? 'true' : 'false'] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000011",
+      "name": "Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b8b2c3d4-0001-4000-8000-000000001101",
+              "leftValue": "={{ $('Switch state').first().json.enabled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000012",
+      "name": "Disabled",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// AI work is off: keep the request so it runs once it is back on.\nreturn [{ json: { reason: 'disabled', not_before: new Date().toISOString(), audit_action: 'gate-skipped-disabled' } }];\n"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000013",
+      "name": "Dispatch?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2200,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b8b2c3d4-0001-4000-8000-000000001301",
+              "leftValue": "={{ $('Gate input').first().json.action }}",
+              "rightValue": "dispatch",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000014",
+      "name": "Read AGENT_CAPS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/variables/AGENT_CAPS",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000015",
+      "name": "Today's runs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2600,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/workflows/{{ $('Gate input').first().json.workflow }}.yml/runs?per_page=100&created=%3E%3D{{ new Date(Date.now() - 36 * 3600000).toISOString().slice(0, 19) }}Z",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000016",
+      "name": "Completed runs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        -400
+      ],
+      "parameters": {
+        "jsCode": "// Completed runs since 00:00 IST may have a run-outcome that excludes them\n// from the count (capped, disabled, blocked); fetch only those outcomes.\n\n// The start of today in IST (00:00 IST = 18:30 UTC the day before), as a Date.\nfunction istMidnight(now) {\n  const ist = new Date(now.getTime() + 330 * 60000);\n  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) - 330 * 60000);\n}\nconst istDay = (now) => new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);\n\nconst since = istMidnight(new Date());\nconst runs = $(\"Today's runs\").first().json.workflow_runs;\nreturn (Array.isArray(runs) ? runs : [])\n  .filter((r) => r.status === 'completed' && new Date(r.created_at) >= since)\n  .map((r) => ({ json: { run_id: r.id } }));\n"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000017",
+      "name": "List outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3000,
+        -400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/runs/{{ $json.run_id }}/artifacts?name=run-outcome",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000018",
+      "name": "Has outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        -400
+      ],
+      "parameters": {
+        "jsCode": "// Runs without a run-outcome artifact (yet) are simply counted.\nreturn $input.all()\n  .map((i) => (i.json.artifacts ?? []).find((a) => a.name === 'run-outcome' && !a.expired))\n  .filter(Boolean)\n  .map((a) => ({ json: { url: a.archive_download_url } }));\n"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000034",
+      "name": "Get download link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3400,
+        -400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {
+          "redirect": {
+            "redirect": {
+              "followRedirects": false
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000019",
+      "name": "Download outcome",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3600,
+        -400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.headers.location }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000020",
+      "name": "Unzip",
+      "type": "n8n-nodes-base.compression",
+      "typeVersion": 1.1,
+      "position": [
+        3800,
+        -400
+      ],
+      "parameters": {
+        "operation": "decompress",
+        "binaryPropertyName": "data",
+        "outputPrefix": "file_"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000021",
+      "name": "Read outcome",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        4000,
+        -400
+      ],
+      "parameters": {
+        "operation": "fromJson",
+        "binaryPropertyName": "file_0",
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000022",
+      "name": "Check cap",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// The daily cap (FR-25, AR-11). The counting rule is shared with the agent's\n// own first step and tested against contracts/cap-count.fixture.json.\n\n// The start of today in IST (00:00 IST = 18:30 UTC the day before), as a Date.\nfunction istMidnight(now) {\n  const ist = new Date(now.getTime() + 330 * 60000);\n  return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) - 330 * 60000);\n}\nconst istDay = (now) => new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);\n\nconst EXCLUDED = new Set(['capped', 'disabled', 'blocked']);\n\nfunction countToday(runs, now, currentRunId) {\n  const since = istMidnight(now);\n  return runs.filter((r) => new Date(r.created_at) >= since && r.id !== currentRunId && !EXCLUDED.has(r.outcome)).length;\n}\n\nconst workflow = $('Gate input').first().json.workflow;\nconst now = new Date();\n\n// Outcomes read from the run-outcome artifacts, by run ID.\nconst outcomes = {};\nif ($('Read outcome').isExecuted) {\n  for (const item of $('Read outcome').all()) {\n    const o = item.json.data;\n    if (o && o.run_id) outcomes[o.run_id] = o.status;\n  }\n}\nconst listed = $(\"Today's runs\").first().json.workflow_runs;\nconst runs = (Array.isArray(listed) ? listed : [])\n  .map((r) => ({ id: r.id, created_at: r.created_at, status: r.status, outcome: outcomes[r.id] ?? null }));\n\n// A missing, unreadable or incomplete AGENT_CAPS counts as \"cap reached\".\nlet cap;\nlet problem = '';\ntry {\n  const caps = JSON.parse($('Read AGENT_CAPS').first().json.value ?? '');\n  cap = caps?.[workflow];\n  if (!Number.isInteger(cap) || cap < 0) problem = `AGENT_CAPS has no daily limit for ${workflow}`;\n} catch {\n  problem = 'AGENT_CAPS is missing or not valid JSON';\n}\n\nconst count = countToday(runs, now, null);\nconst tomorrow = new Date(istMidnight(now).getTime() + 24 * 3600000).toISOString();\nif (problem) {\n  return [{ json: { decision: 'caps-invalid', reason: 'caps-invalid', problem, count, not_before: tomorrow,\n    audit_action: 'gate-deferred-caps-invalid' } }];\n}\nif (count >= cap) {\n  return [{ json: { decision: 'capped', reason: 'capped', cap, count, today: istDay(now), not_before: tomorrow,\n    audit_action: 'gate-deferred-capped' } }];\n}\nreturn [{ json: { decision: 'ok', cap, count } }];\n"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000023",
+      "name": "Over cap?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3000,
+        -100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b8b2c3d4-0001-4000-8000-000000002301",
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000024",
+      "name": "Defer request",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        3200,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Keep the request. Asking again for the same open request only updates its\n-- reason and time; its place in the queue (created_at) stays.\nINSERT INTO audit.deferred_requests (action, workflow, target, payload, reason, not_before)\nVALUES ($1, $2, $3, $4::jsonb, $5, $6::timestamptz)\nON CONFLICT (action, workflow, target) WHERE done_at IS NULL\nDO UPDATE SET reason = excluded.reason, not_before = excluded.not_before, payload = excluded.payload\nRETURNING id;",
+        "options": {
+          "queryReplacement": "={{ [$('Gate input').first().json.action, $('Gate input').first().json.workflow || '', $('Gate input').first().json.target || '', JSON.stringify($('Gate input').first().json.payload ?? {}), $json.reason, $json.not_before] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000025",
+      "name": "Deferred",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3400,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Which path deferred the request: AI work off, or the daily cap.\nconst d = $('Disabled').isExecuted ? $('Disabled').first().json : $('Check cap').first().json;\nconst state = $('Read state').first().json;\n// S11 goes out once per workflow per IST day, not once per request.\nconst s11 = d.reason === 'capped' && state.s11_sent_on !== d.today;\nreturn [{ json: { ...d, queued_id: Number($input.first().json.id), s11 } }];\n"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000026",
+      "name": "Post S11?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3600,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b8b2c3d4-0001-4000-8000-000000002601",
+              "leftValue": "={{ $json.s11 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000027",
+      "name": "S11 message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3800,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// S11 (EXPERIENCE.md M11): today's limit is reached, the request waits.\nconst WORK = {\n  'draft-cases': { work: 'case drafting', units: 'case drafts', later: (t) => `${t} will be drafted after 00:00 IST.`,\n    urgent: 'run /draft-cases in Claude Code on a laptop, or ask the QA lead to change the limit.' },\n  'generate-tests': { work: 'test generation', units: 'test generations',\n    later: (t) => `Tests for ${t} will be generated after 00:00 IST.`,\n    urgent: 'run /generate-api-tests in Claude Code on a laptop, or ask the QA lead to change the limit.' },\n  triage: { work: 'triage', units: 'triage runs', later: () => 'Triage runs again after 00:00 IST.',\n    urgent: 'triage the failures by hand from the failure list, or ask the QA lead to change the limit.' },\n  quarantine: { work: 'quarantine requests', units: 'quarantine requests',\n    later: (t) => `The quarantine request for ${t} will be made after 00:00 IST.`,\n    urgent: 'open the quarantine PR by hand, or ask the QA lead to change the limit.' },\n};\nconst d = $input.first().json;\nconst g = $('Gate input').first().json;\nconst w = WORK[g.workflow] ?? { work: g.workflow, units: `${g.workflow} runs`,\n  later: (t) => `${t || 'The request'} runs after 00:00 IST.`, urgent: 'ask the QA lead to change the limit.' };\nreturn [{\n  json: {\n    kind: 'info',\n    header: `${w.work.charAt(0).toUpperCase()}${w.work.slice(1)} waits until tomorrow`,\n    body: `Today's limit of ${d.cap} ${w.units} is reached (counted since 00:00 IST).\\n${w.later(g.target)}`,\n    todo: w.urgent,\n    todo_label: 'If urgent',\n    links: [],\n    thread_ts: '',\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000028",
+      "name": "Post S11",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4000,
+        100
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "slackPostMsg0001",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "={{ $json.kind }}",
+            "header": "={{ $json.header }}",
+            "body": "={{ $json.body }}",
+            "todo": "={{ $json.todo }}",
+            "todo_label": "={{ $json.todo_label }}",
+            "links": "={{ $json.links }}",
+            "thread_ts": "={{ $json.thread_ts }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "header",
+              "displayName": "header",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo",
+              "displayName": "todo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "links",
+              "displayName": "links",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "array",
+              "removed": false
+            },
+            {
+              "id": "thread_ts",
+              "displayName": "thread_ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000029",
+      "name": "Save S11 day",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        4200,
+        100
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit.relay_state (name, value) VALUES ('s11:' || $1, $2)\nON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = now()\nRETURNING value;",
+        "options": {
+          "queryReplacement": "={{ [$('Gate input').first().json.workflow, $('Deferred').first().json.today] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000030",
+      "name": "Gate audit fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Every skip or deferral is recorded (FR-26).\nconst d = $('Deferred').first().json;\nconst g = $('Gate input').first().json;\nreturn [{\n  json: {\n    actor: 'n8n:gate-check',\n    actor_type: 'n8n',\n    action: d.audit_action,\n    target: [g.action, g.workflow, g.target].filter(Boolean).join(' '),\n    link: '',\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000031",
+      "name": "Write gate audit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        4600,
+        200
+      ],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "auditWriteEntry1",
+          "mode": "id"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "actor": "={{ $json.actor }}",
+            "actor_type": "={{ $json.actor_type }}",
+            "action": "={{ $json.action }}",
+            "target": "={{ $json.target }}",
+            "link": "={{ $json.link }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "actor",
+              "displayName": "actor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "actor_type",
+              "displayName": "actor_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "link",
+              "displayName": "link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000032",
+      "name": "Not allowed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4800,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Tell the caller not to act. A broken AGENT_CAPS also fails the caller's\n// run, so W0 alerts with the reason; the request is already kept.\nconst d = $('Deferred').first().json;\nif (d.reason === 'caps-invalid') {\n  throw new Error(`${d.problem}. Request kept until it is fixed (deferred request ${d.queued_id}).`);\n}\nreturn [{ json: { allowed: false, reason: d.reason, queued_id: d.queued_id, not_before: d.not_before,\n  cap: d.cap ?? null, count: d.count ?? null } }];\n"
+      }
+    },
+    {
+      "id": "b8b2c3d4-0001-4000-8000-000000000033",
+      "name": "Allowed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3200,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// The gate is open: the caller may act now.\nconst c = $('Check cap').isExecuted ? $('Check cap').first().json : {};\nreturn [{ json: { allowed: true, reason: 'ok', cap: c.cap ?? null, count: c.count ?? null } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Gate input": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Read AGENT_ENABLED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read AGENT_ENABLED": {
+      "main": [
+        [
+          {
+            "node": "Read state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read state": {
+      "main": [
+        [
+          {
+            "node": "Switch state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch state": {
+      "main": [
+        [
+          {
+            "node": "Switched?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switched?": {
+      "main": [
+        [
+          {
+            "node": "Post S12",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post S12": {
+      "main": [
+        [
+          {
+            "node": "S12 audit fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S12 audit fields": {
+      "main": [
+        [
+          {
+            "node": "Write S12 audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write S12 audit": {
+      "main": [
+        [
+          {
+            "node": "Save switch state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save switch state": {
+      "main": [
+        [
+          {
+            "node": "Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Dispatch?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Disabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch?": {
+      "main": [
+        [
+          {
+            "node": "Read AGENT_CAPS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Allowed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read AGENT_CAPS": {
+      "main": [
+        [
+          {
+            "node": "Today's runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Today's runs": {
+      "main": [
+        [
+          {
+            "node": "Completed runs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check cap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Completed runs": {
+      "main": [
+        [
+          {
+            "node": "List outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List outcome": {
+      "main": [
+        [
+          {
+            "node": "Has outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has outcome": {
+      "main": [
+        [
+          {
+            "node": "Get download link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get download link": {
+      "main": [
+        [
+          {
+            "node": "Download outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download outcome": {
+      "main": [
+        [
+          {
+            "node": "Unzip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unzip": {
+      "main": [
+        [
+          {
+            "node": "Read outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check cap": {
+      "main": [
+        [
+          {
+            "node": "Over cap?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Over cap?": {
+      "main": [
+        [
+          {
+            "node": "Defer request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Allowed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Disabled": {
+      "main": [
+        [
+          {
+            "node": "Defer request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Defer request": {
+      "main": [
+        [
+          {
+            "node": "Deferred",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deferred": {
+      "main": [
+        [
+          {
+            "node": "Post S11?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post S11?": {
+      "main": [
+        [
+          {
+            "node": "S11 message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gate audit fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S11 message": {
+      "main": [
+        [
+          {
+            "node": "Post S11",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post S11": {
+      "main": [
+        [
+          {
+            "node": "Save S11 day",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save S11 day": {
+      "main": [
+        [
+          {
+            "node": "Gate audit fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate audit fields": {
+      "main": [
+        [
+          {
+            "node": "Write gate audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write gate audit": {
+      "main": [
+        [
+          {
+            "node": "Not allowed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}
