@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "_about": "Shared vocabulary (DESIGN.md components, UX-DR1). Every message producer reads its words from here instead of hard-coding them.",
+  "test_status": {
+    "passed": "PASSED",
+    "failed": "FAILED",
+    "passed_on_retry": "PASSED ON RETRY",
+    "quarantined": "QUARANTINED"
+  },
+  "reactions": {
+    "bug": {
+      "emoji": "🐞",
+      "label": "Bug",
+      "valid_on": [
+        "failure"
+      ],
+      "meaning": "File a Jira bug with me as Reporter."
+    },
+    "flaky": {
+      "emoji": "🔁",
+      "label": "Flaky",
+      "valid_on": [
+        "failure"
+      ],
+      "meaning": "Create the owner's Jira ticket, then ask the agent for a quarantine PR."
+    },
+    "environment": {
+      "emoji": "🌩️",
+      "label": "Environment",
+      "valid_on": [
+        "failure"
+      ],
+      "meaning": "Record as an environment problem. The gate does not change."
+    },
+    "ignore": {
+      "emoji": "🙈",
+      "label": "Ignore",
+      "valid_on": [
+        "failure"
+      ],
+      "meaning": "Record as ignored. A reason reply in the thread is required. The gate does not change."
+    },
+    "approve": {
+      "emoji": "✅",
+      "label": "Approve",
+      "valid_on": [
+        "questions"
+      ],
+      "meaning": "Add these clarification questions to the Jira ticket as a comment naming me."
+    },
+    "undo": {
+      "emoji": "↩️",
+      "label": "Undo",
+      "valid_on": [
+        "failure",
+        "questions"
+      ],
+      "window_hours": 24,
+      "meaning": "Reverse the action taken on this message. Nothing is deleted."
+    }
+  },
+  "triage_class": {
+    "product_defect": "Product defect",
+    "test_defect": "Test defect",
+    "environment": "Environment",
+    "flaky": "Flaky",
+    "unknown": "Unknown"
+  },
+  "run_outcome": {
+    "ok": "Done",
+    "blocked": "Blocked",
+    "capped": "Waiting until tomorrow (daily limit reached)",
+    "disabled": "Not run (agent is turned off)",
+    "error": "Failed"
+  },
+  "notice_kind": {
+    "info": "FYI",
+    "action": "Action needed",
+    "alert": "Alert"
+  },
+  "bot_label": {
+    "jira": "Filed via QA bot"
+  },
+  "link_labels": {
+    "run": "Run",
+    "allure": "Allure report",
+    "pr": "PR",
+    "jira": "Jira",
+    "case_file": "Case file"
+  },
+  "messages": {
+    "failure_list_header": "Nightly run failed: {count} {tests} (UAT, {date})",
+    "retry_only_header": "Nightly run passed with {count} {tests} passed on retry (UAT, {date})",
+    "passed_on_retry_section": "Passed on retry",
+    "triage_live_line": "The agent is classifying these. Results appear in this thread.",
+    "more_items": "and {count} more — see the run",
+    "failure_list_action": "Check the run and the Allure report."
+  }
+}

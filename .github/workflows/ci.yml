@@ -55,6 +55,9 @@ jobs:
         working-directory: scripts
         run: python -m pytest
 
+      - name: Contract samples
+        run: python scripts/validate_contract.py --samples
+
       - name: Test helper unit tests
         working-directory: api-tests
         run: python -m pytest unit -p no:cacheprovider

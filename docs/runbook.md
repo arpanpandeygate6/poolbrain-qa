@@ -187,6 +187,8 @@ n8n can't report its own death, so two sides work together:
 
 **Check it.** In GitHub, **Settings → Secrets and variables → Actions → Variables** shows `N8N_HEARTBEAT_AT`. To test an outage, stop n8n (`cd n8n && docker compose stop`) and run heartbeat-watch by hand after more than 2 hours, then start n8n again.
 
+**Laptop host (prototype).** n8n runs only while the Mac is awake. If the Mac sleeps for more than 2 hours, heartbeat-watch correctly alerts by email, at most every 6 hours. On 2 Oct 2026, the Mac slept from about 00:15 to 22:30 IST and three alerts arrived; a manual W5 run cleared it. To avoid this, keep the Mac awake on power (System Settings → Battery → Options → "Prevent automatic sleeping on power adapter when the display is off"), disable heartbeat-watch while away, or move n8n to an always-on machine (D8). W5 and the run recorder retry each GitHub call up to 5 times, 5 seconds apart, to ride out the brief network gap just after waking.
+
 **Note.** GitHub turns off scheduled workflows in a repository with no activity for 60 days. If that happens, re-enable heartbeat-watch on the Actions tab.
 
 ## n8n workflows in this repository
@@ -226,3 +228,29 @@ Checked on 1 Oct 2026, in a local rehearsal with temporary tests:
 - A test that failed once and then passed was PASSED ON RETRY, and the run was green.
 - A failing quarantined test was QUARANTINED, the run was green, and its flow showed as not covered.
 - The same failing test without quarantine turned the run red.
+
+## Failure list (Story 2.4)
+
+After the tests, the nightly's separate **Failure list** job builds the plain list of last night's failures. That job holds no test credentials.
+
+- **Which tests:** FAILED, QUARANTINED and PASSED ON RETRY tests, each with its last 7 scheduled nights' results (fewer while there are fewer runs).
+- **The Slack message** follows EXPERIENCE.md M1: the header "Nightly run failed: N tests (UAT, <date> 02:30 IST)", one line per test (cut at 10, with "and N more — see the run"), a "Passed on retry" section, a "What to do" line, and the labelled links Run · Allure report. Nothing is posted when every test passed with no retries.
+- **Triage line:** "The agent is classifying these. Results appear in this thread." appears only when the repository variable `TRIAGE_LIVE` is `true`. It stays unset until the triage epic.
+- **Words:** every status word, reaction, triage class, run outcome, notice kind and label comes from `contracts/vocabulary.json`, never from code (UX-DR1).
+- **Saved file:** after a successful post, the list is checked against `contracts/failure-list.schema.json` and saved as the artifact `failure-list` (30 days), with the message's `slack_channel` and `slack_ts`. If the check fails, the job fails and nothing is saved. If the Slack post fails, the job fails with the reason and nothing is saved. Either way the test result is unchanged.
+
+**Slack not set up yet.** Until it is, the job shows the message it would post as a preview in its summary, and saves no `failure-list`, because the file needs the Slack message's ID. To turn posting on:
+
+1. Finish the Slack app (Story 5.2) and invite it to the QA channel.
+2. Set the repository variable `SLACK_CHANNEL`, for example `#qa-automation`.
+3. Put the bot token where only `main` can use it: in the `notify` Environment on a plan with Environments. On GitHub Free, the team decides; it must never be a repository secret without that decision being recorded here.
+4. Add `environment: notify` and `SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}` to the "Build the failure list" step's job.
+
+## Contracts (AD-5)
+
+`contracts/` holds the schema for every file handed between components (`<name>.schema.json`), a sample of each in `contracts/samples/`, and the shared vocabulary.
+
+- `schema_version` comes first in every file.
+- A breaking change bumps `schema_version`, and consumers reject versions they don't know.
+- Producers validate before saving: `python scripts/validate_contract.py <name> <file>`, or call `validate()` from Python.
+- The `ci` check validates every sample (`--samples`), so each schema needs at least one sample.

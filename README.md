@@ -19,6 +19,7 @@ poolbrain-qa/
 │   ├── playwright.config.ts
 │   ├── pages/          Page objects go here
 │   └── tests/          Specs go here
+├── contracts/          Schemas for handover files (failure-list), samples, shared vocabulary
 ├── flows/
 │   ├── inventory.yaml  Business flows: the only place flow IDs are defined
 │   └── quarantine.yaml Quarantined tests (owner, Jira key, deadline)
@@ -132,6 +133,6 @@ If you're not sure where to start, ask Claude Code to run the `bmad-help` skill.
 ## Not set up yet
 
 - PoolBrain tests against real UAT (only the two login tests exist, run against the pretend site)
-- The smoke workflow, the Slack failure list, and branch protection on `main` (not available on GitHub Free)
+- The smoke workflow, posting the failure list to Slack (built; waits for the Slack app), and branch protection on `main` (not available on GitHub Free)
 - Seeded test data
 - The QA lead's name, flow owners and confirmed business rules in `flows/inventory.yaml` (currently `TBD` and drafts)

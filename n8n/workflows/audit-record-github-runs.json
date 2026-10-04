@@ -76,7 +76,10 @@
           "id": "rtFV51PZnrrirWP0",
           "name": "qa-relay"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
     },
     {
       "id": "e1b2c3d4-0001-4000-8000-000000000004",

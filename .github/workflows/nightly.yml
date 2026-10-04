@@ -52,6 +52,8 @@ jobs:
     # Starts 02:30 IST; 180 minutes ends it by 05:30 IST, before the 06:00 IST deadline.
     # A timed-out run fails.
     timeout-minutes: 180
+    outputs:
+      report-url: ${{ steps.report.outputs.report-url }}
     env:
       POOLBRAIN_ENV: uat
     steps:
@@ -145,3 +147,73 @@ jobs:
         run: |
           echo "nightly FAILED: see the job summary. A red nightly blocks UAT sign-off."
           exit 1
+
+  # Story 2.4: the plain failure list for Slack, built by a separate job that holds
+  # no test credentials. Slack is not set up yet: the job shows the message as a
+  # preview in its summary. When the Slack app and `notify` Environment exist, add
+  # `environment: notify` and pass SLACK_BOT_TOKEN from it (see docs/runbook.md).
+  report:
+    name: Failure list
+    needs: tests
+    if: always() && needs.tests.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Install the contract validator
+        run: pip install "$(grep -i '^jsonschema==' api-tests/requirements.txt)" "$(grep -i '^PyYAML==' api-tests/requirements.txt)"
+
+      - name: Get tonight's per-test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-results-${{ github.run_id }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/current
+
+      - name: Get the last 7 scheduled nightly runs' results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          history="$RUNNER_TEMP/history"
+          mkdir -p "$history"
+          gh api "repos/${{ github.repository }}/actions/workflows/nightly.yml/runs?event=schedule&status=completed&per_page=8" \
+            --jq '[.workflow_runs[] | select(.id != ${{ github.run_id }}) | {id, created_at}] | .[:7]' > "$history/index.json"
+          for id in $(jq -r '.[].id' "$history/index.json"); do
+            gh run download "$id" -R "${{ github.repository }}" -p 'nightly-results-*' -D "$history/$id" 2>/dev/null || continue
+            found="$(find "$history/$id" -name results.json | head -1)"
+            [ -n "$found" ] && [ "$found" != "$history/$id/results.json" ] && mv "$found" "$history/$id/results.json"
+          done
+          echo "Earlier nights with results: $(find "$history" -name results.json | wc -l)"
+
+      - name: Build the failure list
+        env:
+          TRIAGE_LIVE: ${{ vars.TRIAGE_LIVE }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+        run: |
+          if [ "${{ github.event_name }}" = schedule ]; then when="$(TZ=Asia/Kolkata date '+%d %b') 02:30 IST"; else when="$(TZ=Asia/Kolkata date '+%d %b %H:%M IST')"; fi
+          python scripts/failure_list.py \
+            --results-json "$RUNNER_TEMP/current/results.json" \
+            --history-dir "$RUNNER_TEMP/history" \
+            --run-id "${{ github.run_id }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --report-url "${{ needs.tests.outputs.report-url }}" \
+            --date "$when" \
+            --out "$RUNNER_TEMP/failure-list.json"
+
+      - name: Save failure-list
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-list
+          path: ${{ runner.temp }}/failure-list.json
+          retention-days: 30
+          if-no-files-found: ignore
