@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "nightly_run_id": 37213558288,
+  "failures": [
+    {
+      "test_id": "api:tests/test_jobs.py::test_create_job_saves_customer",
+      "flow_id": "job-create",
+      "suite": "API",
+      "attempts": 2,
+      "history": [
+        {
+          "nightly_run_id": 37100000001,
+          "result": "passed"
+        },
+        {
+          "nightly_run_id": 37000000001,
+          "result": "failed"
+        }
+      ],
+      "status": "failed",
+      "flaky_candidate": false,
+      "message": "AssertionError: expected customer [email] at [address], got None",
+      "trace": "tests/test_jobs.py:42: in test_create_job_saves_customer\n    assert row.email == customer.email\nE   AssertionError",
+      "failed_steps": [
+        "Create job through the API",
+        "Check the jobs table"
+      ]
+    }
+  ]
+}

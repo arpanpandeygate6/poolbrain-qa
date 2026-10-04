@@ -217,3 +217,33 @@ jobs:
           path: ${{ runner.temp }}/failure-list.json
           retention-days: 30
           if-no-files-found: ignore
+
+      # Story 6.1: the masked text triage may read. Only the Allure *-result.json
+      # files are read from the test output; its screenshots, traces and videos never are.
+      - name: Get tonight's raw test results
+        if: success() || failure()
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-test-output-${{ github.run_id }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/test-output
+
+      - name: Sanitize failures into triage-input
+        if: success() || failure()
+        run: |
+          python scripts/sanitize.py \
+            --results-json "$RUNNER_TEMP/current/results.json" \
+            --history-dir "$RUNNER_TEMP/history" \
+            --allure-dir "API=$RUNNER_TEMP/test-output/api-tests/reports/allure-results" \
+            --allure-dir "UI=$RUNNER_TEMP/test-output/ui-tests/reports/allure-results" \
+            --run-id "${{ github.run_id }}" \
+            --out "$RUNNER_TEMP/triage-input.json"
+
+      - name: Save triage-input
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: triage-input
+          path: ${{ runner.temp }}/triage-input.json
+          retention-days: 30
+          if-no-files-found: ignore
