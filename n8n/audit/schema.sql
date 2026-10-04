@@ -101,3 +101,17 @@ CREATE TABLE IF NOT EXISTS audit.w1_requests (
 );
 REVOKE ALL ON audit.w1_requests FROM PUBLIC, audit_writer;
 GRANT SELECT, INSERT, UPDATE ON audit.w1_requests TO audit_writer;
+
+-- W1 follow-up (Story 5.5, part 2): the masked text to start a request again,
+-- why it is blocked, which notice was last posted for it (so each goes out
+-- once), and the `failed` state after 3 tries. A retry goes back on the
+-- waiting list with reason `retry`.
+ALTER TABLE audit.w1_requests ADD COLUMN IF NOT EXISTS ticket_text text NOT NULL DEFAULT '';
+ALTER TABLE audit.w1_requests ADD COLUMN IF NOT EXISTS reason text NOT NULL DEFAULT '';
+ALTER TABLE audit.w1_requests ADD COLUMN IF NOT EXISTS notified text NOT NULL DEFAULT '';
+ALTER TABLE audit.w1_requests DROP CONSTRAINT IF EXISTS w1_requests_state_check;
+ALTER TABLE audit.w1_requests ADD CONSTRAINT w1_requests_state_check
+    CHECK (state IN ('dispatched', 'deferred', 'blocked', 'done', 'failed'));
+ALTER TABLE audit.deferred_requests DROP CONSTRAINT IF EXISTS deferred_requests_reason_check;
+ALTER TABLE audit.deferred_requests ADD CONSTRAINT deferred_requests_reason_check
+    CHECK (reason IN ('disabled', 'capped', 'caps-invalid', 'retry'));

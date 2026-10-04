@@ -355,7 +355,7 @@ On a plan with branch protection, protect `main` and record here that an agent p
 
 **How n8n obeys them.** Before any AI action (starting an agent workflow, posting triage, asking for a quarantine, writing to Jira), an n8n workflow calls the shared sub-workflow **"Gate: check"** (`n8n/workflows/gate-check.json`) with `action` (`dispatch`, `triage-post`, `quarantine` or `jira-write`), `workflow` (for `dispatch`: the agent workflow, for example `draft-cases`), `target` (usually the ticket key) and `payload` (what is needed to do it later). It answers `allowed: true`, or `allowed: false` with the `reason` and the waiting-list entry. The caller acts only on `allowed: true`. W0, W5, audit writes and the audit export never call it.
 
-- **Off:** the request goes on the waiting list. The first skipped action after the switch goes off posts "Alert: AI work is off" (what stops, what still runs, how to turn it back on). The first action after it is back on posts "FYI: AI work is on again". Each goes out once per change, and the switch is read on every check, so everything stops within one polling cycle.
+- **Off:** the request goes on the waiting list, and is asked about again after 15 minutes (so the audit log isn't filled with a refusal every 5 minutes while AI work stays off). The first skipped action after the switch goes off posts "Alert: AI work is off" (what stops, what still runs, how to turn it back on). The first action after it is back on posts "FYI: AI work is on again". Each goes out once per change, and the switch is read on every check, so everything stops within one polling cycle.
 - **Daily limit** (for `dispatch` only): it counts that workflow's runs created since 00:00 IST, leaving out runs whose `run-outcome` is `capped`, `disabled` or `blocked`. It reads that outcome from each run's `run-outcome` artifact. If the limit is reached, the request waits until after 00:00 IST, and "FYI: <work> waits until tomorrow" is posted once per workflow per day. The counting rule is shared with the agent side and tested against `contracts/cap-count.fixture.json`.
 - **Broken `AGENT_CAPS`:** the request waits, and the caller's run fails with the reason (for example "AGENT_CAPS has no daily limit for draft-cases"), so W0 alerts.
 - **Every skip or wait** is recorded in the audit log as `n8n:gate-check` (`gate-skipped-disabled`, `gate-deferred-capped`, `gate-deferred-caps-invalid`), and so is each notice.
@@ -425,14 +425,40 @@ If Slack refuses or can't be reached, the run fails and W0 alerts; run it again 
 5. **Asks "Gate: check"** for each request. The waiting list (`audit.deferred_requests`) goes first, oldest first, then new tickets. If allowed, it starts the workflow on `main` with the ticket key and the masked text, records it as `dispatched`, takes it off the waiting list and writes an audit entry (`dispatch-draft-cases` or `dispatch-generate-tests`). If not, the gate keeps it on the waiting list and W1 records it as `deferred`.
 6. Saves its checkpoint only when everything above succeeded.
 
-**W1 is installed but switched off.** While AI work is off, every ticket it sees would join the waiting list, and turning AI on would then start all of them, held back only by the daily limits. Switch it on when AI work should begin: `cd n8n && docker compose run --rm --no-deps -T n8n publish:workflow --id=w1TicketWatch001 && docker compose restart n8n`. Its first run then starts from that moment.
+### W1 Follow-up (Story 5.5, part 2)
 
-**Still to build (next part of Story 5.5):** finding the run and PR each start produced; the Slack notices "Test cases drafted" (S7), "Tests generated" (S9) and "Action needed" (S10); retrying `blocked` runs once the cases are merged; re-queueing `capped` runs; marking records `done`; and switching off the Ready-for-QA notice so a ticket doesn't get two messages.
+"W1 Follow-up" (`n8n/workflows/w1-follow-up.json`) runs every 5 minutes. For every request W1 started, it finds the GitHub run by its title (`draft-cases PM-1234`, the workflows' `run-name`) and reads its `run-outcome`:
+
+| The run ended | Follow-up |
+|---|---|
+| `ok` with a PR | record `done`. Posts S7 "Test cases drafted for <KEY>" (flows, "review and edit PR 1, then merge it to accept the cases.", PR 1 · Jira · Case file) or S9 "Tests generated for <KEY>" ("review every line, approve, then start `uat-pr` with the reviewed commit SHA.", PR 2 · Run workflow: uat-pr · Jira). Once per PR |
+| `blocked`, `cases-not-merged` | record `blocked`. Posts S10 "Action needed: tests for <KEY> can't be generated yet" once ("review and merge PR 1. This retries on its own after that."). Once `cases/<KEY>.md` is on `main`, it puts the request back on the waiting list, and W1 starts it again through the gate |
+| `blocked`, any other reason | `cases-already-on-main` counts as `done`. Otherwise the record is `blocked` with S10 once, saying what a person must do; a person restarts the workflow by hand |
+| `capped` | back on the waiting list until after 00:00 IST, with one S11 per workflow per day |
+| `disabled` | back on the waiting list (the gate's "AI work is off" notice already covers it) |
+| `error`, no `run-outcome`, or no run with its title 20 minutes after the start | tried again through the waiting list, at most 3 tries in all; then `failed`, with one S10 and the laptop command |
+
+A notice that Slack doesn't take fails the run (W0 alerts) before anything is saved, so it is tried again and never posted twice. Every decision writes an audit entry (`n8n:w1-follow-up`).
+
+### Switching W1 on
+
+**W1 and its follow-up are installed but switched off.** While AI work is off, every ticket W1 sees would join the waiting list, and turning AI on would then start all of them, held back only by the daily limits. When AI work should begin (after the Story 4.4 setup and with `AGENT_ENABLED` = `true`):
+
+```bash
+cd n8n
+docker compose run --rm --no-deps -T n8n publish:workflow --id=w1TicketWatch001
+docker compose run --rm --no-deps -T n8n publish:workflow --id=w1FollowUp000001
+docker compose run --rm --no-deps -T n8n unpublish:workflow --id=readyNotice00001
+docker compose restart n8n
+```
+
+W1's first run then starts from that moment. **Decision (Story 5.7):** the Ready-for-QA notice is switched off at the same time, because W1's S9 "Tests generated" message replaces it and a ticket must not get two messages. Record the date here when that happens.
 
 **Checked on 4 Oct 2026:**
 - A manual W1 run read Jira (no tickets had moved in the last 10 minutes) and passed its masking-pin check. n8n's own hash of the copy matched the pin (`0521d2bb…`).
 - A temporary copy with the gate replaced by "allowed" started `draft-cases` in GitHub for the made-up ticket `PM-0`. That run's shared first step stopped it as `disabled` (AI work off, no model call) and saved a `run-outcome` artifact with `ticket_key: PM-0`, which n8n read back. That is the full chain n8n → GitHub → first step → run-outcome, working.
 - The temporary workflows, the `PM-0` record and W1's checkpoint were removed afterwards. The audit entry for that start remains.
+- Part 2, the same day: a fresh `PM-0` start got the title "draft-cases PM-0". "W1 Follow-up" found that run, read its `disabled` outcome, marked the record `deferred` and put it back on the waiting list with its masked text. The real W1 then took it off the list and asked the real gate, which kept it waiting (AI off), so nothing started. That run showed two things, both fixed: the try counter rose although nothing had started (now only real starts count), and while AI is off every 5-minute poll audited a refusal (the gate now asks again after 15 minutes). The test data was removed afterwards.
 
 ## Ready-for-QA notice (Story 5.7)
 

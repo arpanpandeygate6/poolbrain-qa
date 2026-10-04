@@ -716,3 +716,178 @@ def test_w1_dispatches_with_the_masked_text_on_main():
     assert "ref: 'main'" in start["parameters"]["jsonBody"]
     assert "ticket_text: $json.payload.ticket_text" in start["parameters"]["jsonBody"]
     assert W1["connections"]["Allowed?"]["main"][0][0]["node"] == "Start the workflow"
+
+
+# ---------------------------------------------------------------- W1 Follow-up (Story 5.5, part 2)
+
+W1F = workflow("w1-follow-up.json")
+
+
+def iso(minutes_ago):
+    return datetime.fromtimestamp(datetime.now(UTC).timestamp() - minutes_ago * 60, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def request(rid=1, ticket="PM-1", wf="draft-cases", state="dispatched", minutes_ago=5, attempts=1, notified="", reason=""):
+    return {"id": rid, "ticket": ticket, "workflow": wf, "state": state, "reason": reason, "attempts": attempts,
+            "notified": notified, "dispatched_at": iso(minutes_ago), "since": iso(minutes_ago + 2)}
+
+
+def wf_run(r, run_id=9, status="completed", minutes_ago=4, title=None):
+    return {"id": run_id, "display_title": title or f"{r['workflow']} {r['ticket']}", "status": status, "created_at": iso(minutes_ago)}
+
+
+def decide(dispatched=(), runs=(), outcomes=(), waiting=(), cases_now=(), s11=None, cases_prs=None):
+    finished = [{"request_id": r["id"], "run_id": run["id"]} for r, page in zip(dispatched, runs)
+                for run in page if run["status"] == "completed" and run["display_title"] == f"{r['workflow']} {r['ticket']}"][:len(dispatched)]
+    nodes = {"Open requests": {"requests": [], "s11": s11 or {}, "cases_prs": cases_prs or {}},
+             "Dispatched": list(dispatched), "List runs": [{"workflow_runs": list(p)} for p in runs],
+             "Finished runs": finished, "Read outcome": [{"data": o} for o in outcomes],
+             "Waiting for cases": list(waiting), "Cases on main?": [{"statusCode": c} for c in cases_now]}
+    for name in [k for k, v in nodes.items() if v == []]:
+        del nodes[name]
+    return run_code(code_of(W1F, "Decide"), {}, nodes)
+
+
+def outcome(status, reason="", pr_url="", run_id=9):
+    return {"run_id": run_id, "status": status, "reason": reason, **({"pr_url": pr_url} if pr_url else {})}
+
+
+@needs_node
+def test_follow_up_done_posts_s7_once():
+    r = request()
+    [d] = decide([r], [[wf_run(r)]], [outcome("ok", pr_url="https://github.com/o/r/pull/5")])
+    assert (d["state"], d["notice"], d["pr_url"], d["notified"]) == ("done", "S7", "https://github.com/o/r/pull/5", "https://github.com/o/r/pull/5")
+    r = request(notified="https://github.com/o/r/pull/5")
+    [d] = decide([r], [[wf_run(r)]], [outcome("ok", "already-open", "https://github.com/o/r/pull/5")])
+    assert d["state"] == "done" and d["notice"] == ""
+
+
+@needs_node
+def test_follow_up_tests_done_posts_s9():
+    r = request(wf="generate-tests")
+    [d] = decide([r], [[wf_run(r)]], [outcome("ok", pr_url="https://github.com/o/r/pull/6")])
+    assert d["notice"] == "S9"
+
+
+@needs_node
+def test_follow_up_still_running_waits_and_wrong_titles_are_ignored():
+    r = request()
+    assert decide([r], [[wf_run(r, status="in_progress")]]) == []
+    r = request(minutes_ago=30)
+    [d] = decide([r], [[wf_run(r, title="draft-cases PM-2")]])
+    assert (d["state"], d["reason"], d["enqueue"]) == ("deferred", "run-not-found", "retry")
+
+
+@needs_node
+def test_follow_up_blocked_cases_not_merged_posts_s10_once_then_retries_after_merge():
+    r = request(wf="generate-tests")
+    [d] = decide([r], [[wf_run(r)]], [outcome("blocked", "cases-not-merged")], cases_prs={"PM-1": "https://github.com/o/r/pull/5"})
+    assert (d["state"], d["notice"], d["notified"], d["cases_pr"]) == ("blocked", "S10", "blocked:cases-not-merged", "https://github.com/o/r/pull/5")
+    r = request(wf="generate-tests", notified="blocked:cases-not-merged")
+    [d] = decide([r], [[wf_run(r)]], [outcome("blocked", "cases-not-merged")])
+    assert d["notice"] == ""  # the same block is not announced twice
+    waiting = request(wf="generate-tests", state="blocked", reason="cases-not-merged")
+    assert decide(waiting=[waiting], cases_now=[404]) == []
+    [d] = decide(waiting=[waiting], cases_now=[200])
+    assert (d["state"], d["enqueue"], d["reason"]) == ("deferred", "retry", "cases-merged")
+
+
+@needs_node
+def test_follow_up_other_blocks():
+    r = request()
+    [d] = decide([r], [[wf_run(r)]], [outcome("blocked", "cases-already-on-main")])
+    assert d["state"] == "done" and d["notice"] == ""
+    [d] = decide([r], [[wf_run(r)]], [outcome("blocked", "no-matching-flow")])
+    assert (d["state"], d["notice"], d["enqueue"]) == ("blocked", "S10", "")
+
+
+@needs_node
+def test_follow_up_capped_requeues_after_midnight_with_one_s11():
+    a, b = request(1, "PM-1"), request(2, "PM-2")
+    ds = decide([a, b], [[wf_run(a, 9)], [wf_run(b, 10)]], [outcome("capped", "daily-cap-reached", run_id=9),
+                                                            outcome("capped", "daily-cap-reached", run_id=10)])
+    assert [d["enqueue"] for d in ds] == ["capped", "capped"]
+    assert [d["notice"] for d in ds] == ["S11", ""]
+    assert ds[0]["not_before"].endswith("T18:30:00.000Z")
+    today = ds[0]["s11_day"]
+    [d] = decide([a], [[wf_run(a)]], [outcome("capped", "daily-cap-reached")], s11={"draft-cases": today})
+    assert d["notice"] == ""
+
+
+@needs_node
+def test_follow_up_disabled_requeues_and_errors_retry_then_fail():
+    r = request()
+    [d] = decide([r], [[wf_run(r)]], [outcome("disabled", "agent-enabled-off")])
+    assert (d["state"], d["enqueue"], d["notice"]) == ("deferred", "disabled", "")
+    [d] = decide([r], [[wf_run(r)]], [outcome("error", "agent-failed")])
+    assert (d["state"], d["enqueue"], d["reason"]) == ("deferred", "retry", "agent-failed")
+    r = request(attempts=3)
+    [d] = decide([r], [[wf_run(r)]], [outcome("error", "agent-failed")])
+    assert (d["state"], d["notice"], d["enqueue"]) == ("failed", "S10", "")
+    [d] = decide([r], [[wf_run(r)]], [])
+    assert d["reason"] == "no-run-outcome" and d["state"] == "failed"
+
+
+def message(decision, case_text=None):
+    import base64
+
+    file = {"statusCode": 200, "body": {"content": base64.b64encode(case_text.encode()).decode()}} if case_text else {"statusCode": 404}
+    nodes = {"Settings": {"repo": "o/r", "jira_url": "https://jira"}, "Notices": [decision]}
+    code = code_of(W1F, "Message").replace("$input.all()", json.dumps([{"json": file}]))
+    return run_code(code, {}, nodes)[0]
+
+
+BASE = {"ticket": "PM-1", "workflow": "draft-cases", "pr_url": "https://github.com/o/r/pull/5", "run_id": 9,
+        "reason": "", "state": "done", "cases_pr": "", "case_ref": "agent/PM-1-cases"}
+
+
+@needs_node
+def test_s7_and_s9_messages():
+    m = message({**BASE, "notice": "S7"}, "---\nticket: PM-1\nflows: [job-creation, login]\n---\n")
+    assert m["header"] == "Test cases drafted for PM-1" and m["kind"] == ""
+    assert m["body"] == "The agent drafted cases from the acceptance criteria. Flows: `job-creation`, `login`."
+    assert m["todo"] == "review and edit PR 1, then merge it to accept the cases."
+    assert [link["label"] for link in m["links"]] == ["PR 1", "Jira PM-1", "Case file"]
+    assert m["links"][2]["url"] == "https://github.com/o/r/blob/agent/PM-1-cases/cases/PM-1.md"
+    m = message({**BASE, "workflow": "generate-tests", "notice": "S9", "case_ref": "main"}, "flows: [job-creation]\n")
+    assert m["header"] == "Tests generated for PM-1"
+    assert m["body"] == "PR 2 adds API tests with SQL checks for flow `job-creation`."
+    assert m["todo"] == "review every line, approve, then start `uat-pr` with the reviewed commit SHA."
+    assert [link["label"] for link in m["links"]] == ["PR 2", "Run workflow: uat-pr", "Jira PM-1"]
+
+
+@needs_node
+def test_s10_and_s11_messages():
+    m = message({**BASE, "workflow": "generate-tests", "notice": "S10", "state": "blocked", "reason": "cases-not-merged",
+                 "cases_pr": "https://github.com/o/r/pull/5", "pr_url": ""})
+    assert (m["kind"], m["header"]) == ("action", "tests for PM-1 can't be generated yet")
+    assert m["body"] == "Reason: its cases PR is not merged on `main` (`cases-not-merged`)."
+    assert m["todo"] == "review and merge PR 1. This retries on its own after that."
+    assert [link["label"] for link in m["links"]] == ["PR 1", "Run", "Jira PM-1"]
+    m = message({**BASE, "notice": "S10", "state": "failed", "reason": "agent-failed", "pr_url": ""})
+    assert m["header"] == "Case drafting for PM-1 failed"
+    assert m["todo"] == "look at the last run, or run /draft-cases PM-1 on a laptop."
+    m = message({**BASE, "notice": "S11", "state": "deferred", "reason": "capped", "pr_url": ""})
+    assert (m["kind"], m["header"], m["todo_label"]) == ("info", "Case drafting waits until tomorrow", "If urgent")
+    assert "PM-1 will be drafted after 00:00 IST." in m["body"]
+
+
+@needs_node
+def test_follow_up_notice_failure_saves_nothing():
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_code(code_of(W1F, "Posted?").replace("$input.all()", json.dumps([{"json": {"posted": False, "error": "x"}}])), {})
+    assert "W1 notice not posted: x" in failure.value.stderr
+    assert W1F["connections"]["Decide"]["main"][0][0]["node"] == "Notices"  # notices run before the saves
+    assert W1F["settings"]["errorWorkflow"] == W0["id"]
+
+
+@needs_node
+def test_gate_asks_again_about_disabled_requests_after_15_minutes():
+    [out] = run_code(code_of(GATE, "Disabled"), {})
+    wait = datetime.fromisoformat(out["not_before"]) - datetime.now(UTC)
+    assert 14 * 60 < wait.total_seconds() <= 15 * 60
+
+
+def test_w1_counts_only_real_starts_as_tries():
+    record = next(n for n in W1["nodes"] if n["name"] == "Record started")["parameters"]["query"]
+    assert "attempts + CASE WHEN excluded.state = 'dispatched' THEN 1 ELSE 0 END" in record
