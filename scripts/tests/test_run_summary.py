@@ -149,3 +149,13 @@ def test_main_end_to_end(tmp_path, monkeypatch):
     saved = {r["test_id"]: r for r in json.loads(records.read_text())}
     assert saved["api:tests/test_jobs.py::test_b"]["label"] == "QUARANTINED"
     assert saved["api:tests/test_jobs.py::test_b"]["flow_id"] == "job-creation"
+
+
+def test_every_check_lists_each_test_for_smoke():
+    suites = {"API": [t("api:tests/test_smoke.py::test_b", "failed"), t("api:tests/test_smoke.py::test_a"),
+                      t("api:tests/test_smoke.py::test_c", "passed", passed_on_retry=True)]}
+    summary, verdict = build_summary("smoke", "failure", [("Environment", "prod")], suites, "https://allure", every_check=True)
+    assert verdict == "failed" and summary.startswith("## smoke — FAILED")
+    assert "| `api:tests/test_smoke.py::test_a` | **PASSED** |\n| `api:tests/test_smoke.py::test_b` | **FAILED** |\n" \
+           "| `api:tests/test_smoke.py::test_c` | **PASSED ON RETRY** |" in summary
+    assert summary.rstrip().endswith("[Allure report](https://allure)")

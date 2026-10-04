@@ -153,6 +153,7 @@ def build_summary(
     suites: dict[str, list[RunResult]],
     report_url: str,
     notes: list[str] = (),
+    every_check: bool = False,
 ) -> tuple[str, str]:
     verdict = verdict_of(outcome, suites)
     lines = [f"## {title} — {verdict.upper()}", ""]
@@ -169,6 +170,17 @@ def build_summary(
             lines.append(f"| {name} | {c.passed} | {c.failed} | {c.passed_on_retry} | {c.quarantined} | {c.skipped} |")
     else:
         lines.append("No test results were produced (no results). Open the run log to see why.")
+
+    if every_check and any(suites.values()):
+        # The smoke summary (Story 3.2): every check with its result, not only the failures.
+        word = {"passed": "PASSED", "failed": "FAILED", "skipped": "SKIPPED"}
+        lines += ["", "| Check | Result |", "|---|---|"]
+        for t in sorted((t for ts in suites.values() for t in ts), key=lambda t: t.test_id):
+            lines.append(f"| `{t.test_id}` | **{t.label or word[t.status]}** |")
+        lines.append("")
+        lines.append(f"[Allure report]({report_url})" if report_url else "Allure report: no results")
+        lines += [f"\n{note}" for note in notes]
+        return "\n".join(lines) + "\n", verdict
 
     order = {FAILED: 0, QUARANTINED: 1, PASSED_ON_RETRY: 2}
     flagged = sorted((t for ts in suites.values() for t in ts if t.label), key=lambda t: (order[t.label], t.test_id))
@@ -195,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quarantine", type=Path, help="flows/quarantine.yaml")
     parser.add_argument("--tests-json", type=Path, help="the flow-tag linter's --json output")
     parser.add_argument("--results-json", type=Path, help="write one record per test to this file")
+    parser.add_argument("--every-check", action="store_true", help="list every test with its result (smoke)")
     args = parser.parse_args(argv)
 
     quarantine, flows = load_quarantine(args.quarantine), load_flows(args.tests_json)
@@ -207,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         suites[name] = tests
 
     details = [tuple(d.split("=", 1)) for d in args.detail]
-    summary, verdict = build_summary(args.title, args.outcome, details, suites, args.report_url, args.note)
+    summary, verdict = build_summary(args.title, args.outcome, details, suites, args.report_url, args.note, args.every_check)
 
     if path := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(path, "a", encoding="utf-8") as f:

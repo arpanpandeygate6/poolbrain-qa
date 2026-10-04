@@ -1,0 +1,132 @@
+# smoke (Story 3.2): one button that runs the read-only smoke suite on UAT,
+# Preprod, PROD and NPP: Actions → smoke → Run workflow, then pick the
+# environment or `all`. One job per environment, 10 minutes each; one
+# environment's failure doesn't stop the others. It replaces the manual Postman
+# release run (Story 3.3).
+#
+# Every job runs only `pytest -m smoke` with CI=true: smoke tests only read, and
+# only the testing company's data (Story 3.1). ApiClient refuses any write on
+# Preprod, PROD and NPP before any network call.
+#
+# GitHub Free: there are no Environments for private repositories, so there is
+# no `prod-smoke` (or `uat-nightly`) Environment yet. The workflow runs only
+# from `main`, and Preprod, PROD and NPP report "Not run: … not set up" until
+# their credentials exist where the team decides (docs/runbook.md, "Smoke").
+# On a plan with Environments, uncomment the `environment:` lines below.
+# UAT runs against the pretend PoolBrain until there is UAT access.
+
+name: smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Where to run (read-only, testing company only)"
+        required: true
+        type: choice
+        default: all
+        options: [all, uat, preprod, prod, npp]
+
+permissions: {}
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.env }})
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # environment: ${{ matrix.env == 'uat' && 'uat-nightly' || 'prod-smoke' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # `all`: one job per environment; otherwise just the one chosen.
+        env: ${{ fromJSON(inputs.environment == 'all' && '["uat","preprod","prod","npp"]' || format('["{0}"]', inputs.environment)) }}
+    env:
+      CI: "true"
+      POOLBRAIN_ENV: ${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: api-tests/requirements.txt
+
+      - name: Install packages
+        run: pip install -r api-tests/requirements.txt
+
+      - name: Start the pretend PoolBrain
+        if: matrix.env == 'uat'
+        uses: ./.github/actions/start-mock-poolbrain
+
+      # Preprod, PROD and NPP: the credentials for this environment, by agreed name
+      # (for example PROD_API_BASE_URL). Missing: the job says so and runs nothing.
+      - name: Credentials for ${{ matrix.env }}
+        id: creds
+        if: matrix.env != 'uat'
+        env:
+          BASE: ${{ secrets[format('{0}_API_BASE_URL', matrix.env)] }}
+          TOKEN: ${{ secrets[format('{0}_API_TOKEN', matrix.env)] }}
+          EMAIL: ${{ secrets[format('{0}_API_USER_EMAIL', matrix.env)] }}
+          PASSWORD: ${{ secrets[format('{0}_API_USER_PASSWORD', matrix.env)] }}
+          COMPANY: ${{ secrets[format('{0}_TESTING_COMPANY_ID', matrix.env)] }}
+        run: |
+          if [ -z "$BASE" ] || [ -z "$COMPANY" ] || { [ -z "$TOKEN" ] && { [ -z "$EMAIL" ] || [ -z "$PASSWORD" ]; }; }; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            env_upper="$(echo "${{ matrix.env }}" | tr a-z A-Z)"
+            {
+              echo "## smoke — NOT RUN"
+              echo
+              echo "| | |"; echo "|---|---|"
+              echo "| Environment | ${{ matrix.env }} |"
+              echo
+              echo "Not run: ${{ matrix.env }} smoke credentials are not set up (${env_upper}_API_BASE_URL, ${env_upper}_TESTING_COMPANY_ID, and ${env_upper}_API_TOKEN or ${env_upper}_API_USER_EMAIL and ${env_upper}_API_USER_PASSWORD). See docs/runbook.md, \"Smoke\"."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "API_BASE_URL=$BASE"
+            echo "API_TOKEN=$TOKEN"
+            echo "API_USER_EMAIL=$EMAIL"
+            echo "API_USER_PASSWORD=$PASSWORD"
+            echo "TESTING_COMPANY_ID=$COMPANY"
+          } >> "$GITHUB_ENV"
+
+      - name: Smoke tests
+        id: tests
+        if: matrix.env == 'uat' || steps.creds.outputs.ready == 'true'
+        working-directory: api-tests
+        run: |
+          set +e
+          timeout 540 python -m pytest -m smoke
+          code=$?
+          if [ "$code" = 124 ]; then echo "timed_out=true" >> "$GITHUB_OUTPUT"; fi
+          exit $code
+
+      - name: Test report
+        id: report
+        if: always() && steps.tests.outcome != 'skipped'
+        uses: ./.github/actions/test-report
+        with:
+          name: smoke-${{ matrix.env }}
+
+      - name: Job summary
+        if: always() && steps.tests.outcome != 'skipped'
+        run: |
+          note="Read-only, testing company only."
+          if [ "${{ steps.tests.outputs.timed_out }}" = "true" ]; then note="FAILED: timed out after 10 minutes. $note"; fi
+          if [ "${{ github.event_name }}" = schedule ]; then started="schedule"; else started="@${{ github.triggering_actor }}"; fi
+          python scripts/run_summary.py --title smoke --outcome "${{ steps.tests.outcome }}" --every-check \
+            --detail "Environment=${{ matrix.env }}" \
+            --detail "Commit=\`${GITHUB_SHA::7}\`" \
+            --detail "Started by=$started" \
+            --detail "Time=$(TZ=Asia/Kolkata date '+%d %b %Y %H:%M IST')" \
+            --report-url "${{ steps.report.outputs.report-url }}" \
+            --note "$note" \
+            --suite API=api-tests/reports/allure-results
