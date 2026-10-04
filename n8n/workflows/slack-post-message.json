@@ -1,0 +1,265 @@
+{
+  "id": "slackPostMsg0001",
+  "name": "Slack: post message",
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  },
+  "nodes": [
+    {
+      "id": "e1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Message",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "kind",
+              "type": "string"
+            },
+            {
+              "name": "header",
+              "type": "string"
+            },
+            {
+              "name": "body",
+              "type": "string"
+            },
+            {
+              "name": "todo",
+              "type": "string"
+            },
+            {
+              "name": "links",
+              "type": "array"
+            },
+            {
+              "name": "thread_ts",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "e1b2c3d4-0001-4000-8000-000000000002",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e1b2c3d4-0001-4000-8000-000000000102",
+              "name": "slack_channel",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1b2c3d4-0001-4000-8000-000000000003",
+      "name": "Build message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Builds one Slack message in the shared anatomy (EXPERIENCE.md): header,\n// what happened, what to do, links. The plain `text` is the notification\n// fallback: header plus what to do.\n\n// Notice-kind words, copied from contracts/vocabulary.json (notice_kind).\n// scripts/tests/test_n8n_workflows.py checks that this copy still matches.\nconst NOTICE_KIND = { info: 'FYI', action: 'Action needed', alert: 'Alert' };\n\nconst m = $('Message').first().json;\nconst channel = $('Settings').first().json.slack_channel ?? '';\nconst links = (Array.isArray(m.links) ? m.links : []).filter((l) => l && l.url && l.label);\n\nconst prefix = NOTICE_KIND[m.kind];\nconst header = prefix ? `${prefix}: ${m.header}` : String(m.header ?? '');\nconst todo = m.todo ? `What to do: ${m.todo}` : '';\n\nconst blocks = [{ type: 'header', text: { type: 'plain_text', text: header.slice(0, 150) } }];\nif (m.body) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: m.body } });\nif (todo) blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*What to do:* ${m.todo}` } });\nif (links.length) {\n  blocks.push({\n    type: 'context',\n    elements: [{ type: 'mrkdwn', text: links.map((l) => `<${l.url}|${l.label}>`).join(' · ') }],\n  });\n}\n\nconst text = todo ? `${header.replace(/\\.$/, '')}. ${todo}` : header;\nconst preview = [header, m.body, todo, links.map((l) => `${l.label}: ${l.url}`).join(' · ')]\n  .filter(Boolean)\n  .join('\\n');\n\nreturn [{ json: { channel, text, blocks, thread_ts: m.thread_ts || '', preview } }];\n"
+      }
+    },
+    {
+      "id": "e1b2c3d4-0001-4000-8000-000000000004",
+      "name": "Slack set up?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e1b2c3d4-0001-4000-8000-000000000104",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e1b2c3d4-0001-4000-8000-000000000005",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        -100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, text: $json.text, blocks: $json.blocks, thread_ts: $json.thread_ts || undefined, unfurl_links: false, unfurl_media: false }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "e1b2c3d4-0001-4000-8000-000000000006",
+      "name": "Posted?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Slack answers 200 even when it refuses a message, with ok: false.\nconst r = $input.first().json;\nreturn [{ json: r.ok ? { posted: true, channel: r.channel, ts: r.ts } : { posted: false, error: `Slack said ${r.error}` } }];\n"
+      }
+    },
+    {
+      "id": "e1b2c3d4-0001-4000-8000-000000000007",
+      "name": "Post failed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Slack could not be reached. Report a short reason; the caller decides what to do.\nconst e = $input.first().json.error;\nconst reason = String(e?.message ?? e ?? 'request failed').split('\\n')[0].slice(0, 160);\nreturn [{ json: { posted: false, error: `Slack unreachable: ${reason}` } }];\n"
+      }
+    },
+    {
+      "id": "e1b2c3d4-0001-4000-8000-000000000008",
+      "name": "Preview only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        140
+      ],
+      "parameters": {
+        "jsCode": "// Slack is not set up yet (no channel in Settings): nothing is sent. The\n// message is returned as a preview, visible in this execution in n8n.\nconst m = $input.first().json;\nreturn [{ json: { posted: false, preview: true, message: m.preview } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Message": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Build message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build message": {
+      "main": [
+        [
+          {
+            "node": "Slack set up?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack set up?": {
+      "main": [
+        [
+          {
+            "node": "Post to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Preview only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Slack": {
+      "main": [
+        [
+          {
+            "node": "Posted?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

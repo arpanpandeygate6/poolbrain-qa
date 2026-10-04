@@ -135,11 +135,11 @@ Never run `docker compose down -v`: `-v` deletes the data volumes.
 
 | Connection | n8n credential | Status |
 |---|---|---|
-| Slack app "QA Bot" | QA Bot (Slack) | **Waiting** for a QA Slack channel the bot can be invited to |
+| Slack app "QA Bot" | QA Bot (Slack) | **Placeholder** since 4 Oct 2026: messages are previews until the app exists and a channel is chosen (see "Slack messages" below) |
 | GitHub App `qa-relay` (named `poolbrain-qa-relay` on GitHub) | qa-relay | Done 1 Oct 2026; checked: it sees only this repository and can read runs and variables |
 | Jira Cloud, `https://gatesix.atlassian.net`, project `PM` | Jira (QA relay) | Done 1 Oct 2026; checked: it reads PM tickets and can create issues and add comments, but **cannot set Reporter** (needed later for filing bugs) |
 
-**Slack.** Create the app from `n8n/slack-app-manifest.yaml` (https://api.slack.com/apps → Create New App → From a manifest). It has exactly the bot scopes `chat:write`, `reactions:read`, `channels:history`, `groups:history`, `usergroups:read`, `users:read`, `users:read.email` and `files:write`, with no events, slash commands or interactivity (n8n polls Slack). Invite the bot only to the QA channel. The bot token goes only into the n8n credential.
+**Slack.** Create the app from `n8n/slack-app-manifest.yaml` (https://api.slack.com/apps → Create New App → From a manifest). It has exactly the bot scopes `chat:write`, `reactions:read`, `channels:history`, `groups:history`, `usergroups:read`, `users:read`, `users:read.email` and `files:write`, with no events, slash commands or interactivity (n8n polls Slack). Invite the bot only to the QA channel. The bot token goes only into the n8n credential, through `n8n/slack-setup.sh` (see "Slack messages").
 
 **GitHub App `qa-relay`.** It is installed only on this repository, with webhooks off, and has these repository permissions: Actions read and write, Contents read, Issues read and write, Pull requests read, Variables read and write. Its private key goes only into the n8n credential (type "GitHub App API"); afterwards, delete the downloaded `.pem` or move it to a password manager.
 
@@ -174,7 +174,30 @@ Every n8n workflow writes audit entries only by calling that sub-workflow, with 
 - It keeps its own checkpoint in `audit.checkpoints` and looks back one day before it, so runs that finished while n8n was down are recorded when it returns.
 - A unique index on the run link means a run is never recorded twice. Checked on 1 Oct 2026: a second pass over the same three runs added nothing.
 
-**Still to build:** the W0 error handler that alerts in Slack. It needs the Slack app.
+
+## Slack messages and the W0 error alert (Story 5.3)
+
+**One way to post.** Every n8n workflow posts to Slack only by calling the sub-workflow "Slack: post message" (`n8n/workflows/slack-post-message.json`). Its inputs are `kind` (`info`, `action` or `alert`, which adds "FYI:", "Action needed:" or "Alert:"), `header`, `body`, `todo`, `links` (a list of `{label, url}`) and `thread_ts`. It builds the message in the shared shape (header, what happened, what to do, links) and returns `posted`, or `preview`, or `error`.
+
+**Preview mode.** Until Slack is set up, nothing is sent. The sub-workflow returns the message as a preview, which you can read in n8n under **Executions** → "Slack: post message".
+
+**Turning Slack on (later).** Create the Slack app (see "n8n connections"), invite it to the QA channel, then:
+
+1. Add the channel ID to `n8n/.env`: `SLACK_CHANNEL=C0123456789` (in Slack, open the channel → its name → the ID is at the bottom).
+2. Run `SLACK_BOT_TOKEN=xoxb-... n8n/slack-setup.sh`. The token goes only into the n8n credential "QA Bot (Slack)", never into a file.
+
+Nothing else changes: every workflow starts posting. Running `n8n/slack-setup.sh` without a token keeps the stored one. Without a channel it installs everything in preview mode, which is how it was set up on 4 Oct 2026.
+
+**W0 Error handler** (`n8n/workflows/w0-error-handler.json`). Every n8n workflow names W0 as its error workflow (`settings.errorWorkflow`). When one fails, W0:
+
+- posts S16: "Alert: n8n workflow error in <workflow>", the step, a short cleaned error, the time in IST, "What to do: n8n maintainer, open the execution (office network only)." and the execution link;
+- cleans the error first: first line only, at most 160 characters, with tokens, emails, long keys and URL query strings replaced by `[hidden]` or `[email]`, so no stack traces, secrets or ticket text reach Slack;
+- writes one audit entry as `n8n:w0-error-handler`: `error-alert-posted`, `error-alert-preview` or `error-alert-failed` (Slack refused or was unreachable, with the reason);
+- never alerts about itself or its helpers, and runs whatever `AGENT_ENABLED` says.
+
+**New workflows** must set `"errorWorkflow": "w0ErrorHandler1"` in their settings; `scripts/tests/test_n8n_workflows.py` checks the existing ones. Errors only reach W0 from scheduled or triggered runs, not from clicking "Execute workflow" in the editor.
+
+**Checked on 4 Oct 2026:** a throwaway scheduled workflow failed with an error containing a Slack token, an email, a URL query and a stack trace. W0 ran within a second and produced the preview "Alert: n8n workflow error in Throwaway W0 test / Step: call Jira. Error: Jira returned 403 for token [hidden] and [email] at https://x.atlassian.net/rest [line 1]. / Time: 04 Oct 20:59 IST.", with none of the secrets in the execution data, and wrote an `error-alert-preview` audit entry. The throwaway workflow was then deleted.
 
 ## Heartbeat (Story 5.4)
 
