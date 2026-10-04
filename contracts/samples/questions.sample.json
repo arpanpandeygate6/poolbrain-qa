@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "ticket": "PM-1234",
+  "questions": [
+    {
+      "number": 1,
+      "question": "Can a job be scheduled on a Sunday, or should the form refuse it?",
+      "about": "AC 2: scheduling days"
+    },
+    {
+      "number": 2,
+      "question": "What should happen when the customer has no service address: block the job or save it without one?",
+      "about": "AC 3: customer address"
+    }
+  ]
+}
