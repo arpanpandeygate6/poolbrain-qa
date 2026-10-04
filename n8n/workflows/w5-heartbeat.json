@@ -134,6 +134,7 @@
   "settings": {
     "executionOrder": "v1",
     "saveDataSuccessExecution": "all",
-    "saveDataErrorExecution": "all"
+    "saveDataErrorExecution": "all",
+    "errorWorkflow": "w0ErrorHandler1"
   }
 }
