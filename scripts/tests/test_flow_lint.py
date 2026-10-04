@@ -202,6 +202,7 @@ def test_skip_and_fixme_are_listed_but_do_not_fail(repo, capsys):
         (INVENTORY.replace("qa_lead: Test Lead", "qa_lead:"), "'qa_lead' must name the QA lead"),
         (INVENTORY.replace("layers: [api, ui]", "layers: [web]"), "flow 'login' 'layers' must be"),
         (INVENTORY.replace("    owner: someone\n    layers: [api, ui]", "    layers: [api, ui]"), "flow 'login' needs a 'owner'"),
+        (INVENTORY.replace("layers: [api, ui]", "layers: [api, ui]\n    ui_top10: yes please"), "flow 'login' 'ui_top10' must be true or false"),
     ],
 )
 def test_malformed_inventory_fails(repo, capsys, inventory, message):

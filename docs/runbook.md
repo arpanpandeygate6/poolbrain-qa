@@ -238,6 +238,20 @@ Run it in Claude Code in the repository. It asks you to paste the ticket text, b
 
 **Still to do: the end-to-end try with a real ticket.** The QA lead picks a ticket, a QA member runs `/draft-cases` on it, and the QA lead confirms the drafted cases make sense. Adjust `CLAUDE.md` or `.claude/commands/draft-cases.md` until they do. Checked on 4 Oct 2026 without a real ticket: a case file and questions file drafted by following the command's steps for a made-up ticket passed both checks. It was written outside the repository and not committed.
 
+### `/generate-api-tests <KEY>` (Story 4.3)
+
+Run it after PR 1 (the case file) is merged. It:
+1. fetches the latest `main` and stops with "Cases for <KEY> are not merged on main yet. Merge PR 1 first." if `cases/<KEY>.md` isn't there, changing nothing;
+2. starts `agent/<KEY>-tests` from `main`;
+3. writes one pytest test per `api`/`db` case (helpers only, `regression`/`db`/`flow` markers, `qa-auto-` names, the case ID in the docstring). For `ui` cases it writes Playwright specs with page objects, but only on flows marked `ui_top10: true` in `flows/inventory.yaml`;
+4. maps the new tests to their business rules in `flows/inventory.yaml`, so coverage counts them once merged;
+5. runs the flow-tag linter, pytest collection, the type check, `ruff` and the new tests on UAT from the laptop. A test that fails because the product behaves differently from the case is left as written and reported, never weakened;
+6. opens PR 2 `[<KEY>] Tests: …` with `.github/PULL_REQUEST_TEMPLATE/tests.md`. UAT stays "not run yet" until a QA member reviews it and starts `uat-pr` with the head commit SHA.
+
+**Top 10 UI flows.** `ui_top10: true` marks the flows that also get Playwright tests (FR-09). Today `login` and `job-creation` are marked, because they already have UI tests. The QA lead confirms or changes the list.
+
+**Checked on 4 Oct 2026 (dry run, not committed):** following the command's steps for the made-up case file PM-9001 (3 cases: job type required) produced 3 pytest tests. Flow tags, collection, type check, `ruff` and the case-file check passed, and all 3 tests passed against the pretend PoolBrain, started with made-up accounts. The "not merged on main" guard stopped as it should. The dry-run files were deleted. Still to do: a real run on a ticket whose PR 1 the QA lead has merged.
+
 ## Kill switch and daily limits (Story 5.6)
 
 **Turning AI work off and on.** In GitHub: **Settings → Secrets and variables → Actions → Variables**, the repository variable `AGENT_ENABLED`. Only the exact value `true` lets AI work run. `false`, any other value, or no variable at all counts as off. Only people change it (the QA lead or n8n maintainer), never a workflow.

@@ -19,7 +19,7 @@ This repository holds PoolBrain's automated regression tests and the tooling aro
 | Folder | What lives there |
 |---|---|
 | `api-tests/` | Python + pytest. `tests/` holds tests, `utils/` the helpers, `conftest.py` the `api`, `logged_in_api` and `db` fixtures, `pytest.ini` the markers |
-| `ui-tests/` | Playwright + TypeScript, for the top 10 flows only. `tests/` holds specs, `pages/` page objects, `support/naming.ts` the naming helper |
+| `ui-tests/` | Playwright + TypeScript, for the top 10 flows only (`ui_top10: true` in the inventory). `tests/` holds specs, `pages/` page objects, `support/naming.ts` the naming helper |
 | `cases/` | Test case files, one per Jira ticket: `cases/<KEY>.md`, plus `cases/<KEY>.questions.json` |
 | `flows/` | `inventory.yaml` (the only place flow IDs and business rules are defined) and `quarantine.yaml` |
 | `contracts/` | JSON schemas for handover files (`schema_version` first, snake_case fields), samples, `vocabulary.json` (all user-facing status words) |
@@ -43,6 +43,7 @@ This repository holds PoolBrain's automated regression tests and the tooling aro
 
 - Flow tags: `python scripts/flow_lint.py`
 - Case files: `python scripts/case_lint.py`
+- Type check (UI): `cd ui-tests && npm run typecheck`
 - Contracts: `python scripts/validate_contract.py <name> <file>`
 - API tests: `cd api-tests && pytest` (UAT; on the prototype, the pretend PoolBrain in `mock-poolbrain/`)
 - Lint: `ruff check .`

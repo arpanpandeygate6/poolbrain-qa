@@ -14,6 +14,8 @@
 #   name    plain-language name
 #   owner   test owner (default owner for quarantine tickets)
 #   layers  where the flow is tested: api, db and/or ui
+#   ui_top10  true for the top 10 flows that also get Playwright UI tests (FR-09);
+#           leave it out (false) for API/DB-only flows
 #   rules   business rules; each has a short id, a description and `tests`,
 #           the canonical test IDs that assert it:
 #             api:<path under api-tests>::<test name>
@@ -28,6 +30,7 @@ flows:
     name: Login
     owner: TBD
     layers: [api, ui]
+    ui_top10: true
     rules:
       - id: LOGIN-1
         description: A role test account signs in with valid credentials.
@@ -39,6 +42,7 @@ flows:
     name: Job creation
     owner: TBD
     layers: [api, db, ui]
+    ui_top10: true
     rules:
       - id: JOB-1
         description: A job created for a customer is saved with the entered details.
