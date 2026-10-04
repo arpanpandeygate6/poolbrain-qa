@@ -164,6 +164,43 @@
       }
     },
     {
+      "id": "e1b2c3d4-0001-4000-8000-000000000009",
+      "name": "Get link",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        -200
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://slack.com/api/chat.getPermalink?channel={{ encodeURIComponent($json.channel ?? '') }}&message_ts={{ encodeURIComponent($json.ts ?? '') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "slackQaBot000001",
+          "name": "QA Bot (Slack)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "e1b2c3d4-0001-4000-8000-000000000010",
+      "name": "Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -200
+      ],
+      "parameters": {
+        "jsCode": "// Adds the message's Slack link, used in audit entries.\nconst p = $('Posted?').first().json;\nreturn [{ json: p.posted ? { ...p, link: $json.permalink ?? '' } : p }];\n"
+      }
+    },
+    {
       "id": "e1b2c3d4-0001-4000-8000-000000000007",
       "name": "Post failed",
       "type": "n8n-nodes-base.code",
@@ -254,6 +291,28 @@
         [
           {
             "node": "Post failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Posted?": {
+      "main": [
+        [
+          {
+            "node": "Get link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get link": {
+      "main": [
+        [
+          {
+            "node": "Result",
             "type": "main",
             "index": 0
           }
