@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "triage",
+  "title": "triage",
+  "description": "The triage agent's suggestion for each failure of one nightly run, saved as the artifact `triage` (triage.json) by the triage workflow (Story 6.2, AD-5). Classes are keys of vocabulary.json triage_class. Every test_id of the run's triage-input appears exactly once. Consumer: n8n W3 (Story 6.3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "nightly_run_id",
+    "failures"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "nightly_run_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "failures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "test_id",
+          "class",
+          "evidence"
+        ],
+        "properties": {
+          "test_id": {
+            "type": "string",
+            "pattern": "^(api:[^\\s]+::.+|ui:.+ > .+)$"
+          },
+          "class": {
+            "enum": [
+              "product_defect",
+              "test_defect",
+              "environment",
+              "flaky",
+              "unknown"
+            ]
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 300,
+            "pattern": "^[^\\n]+$",
+            "description": "One line: why this class, citing the error and, for flaky, the rerun history."
+          },
+          "bug_title": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 120,
+            "pattern": "^[^\\n]+$",
+            "description": "A drafted Jira bug title; required for product_defect and only allowed there."
+          }
+        },
+        "if": {
+          "properties": {
+            "class": {
+              "const": "product_defect"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "bug_title"
+          ]
+        },
+        "else": {
+          "not": {
+            "required": [
+              "bug_title"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "nightly_run_id": 37213558288,
+  "failures": [
+    {
+      "test_id": "api:tests/test_jobs.py::test_create_job_saves_customer",
+      "class": "product_defect",
+      "evidence": "API returned 500 on job create; it passed the 6 nights before, so the change is new.",
+      "bug_title": "Job create returns 500 when the route is empty"
+    },
+    {
+      "test_id": "ui:tests/login.spec.ts > Login > office admin signs in",
+      "class": "flaky",
+      "evidence": "Passed on retry tonight and failed 2 of the last 7 nights with the same timeout."
+    }
+  ]
+}

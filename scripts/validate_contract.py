@@ -10,7 +10,7 @@ the file must use standard CSV quoting, and every row must match the schema.
 
 Usage:
     python scripts/validate_contract.py failure-list path/to/failure-list.json
-    python scripts/validate_contract.py --samples   # every contracts/samples/<name>*.json
+    python scripts/validate_contract.py --samples   # every contracts/samples/<name>.*.json and .csv
 Exit code 0 when valid, 1 otherwise. Producers call validate() before saving.
 """
 
@@ -100,8 +100,9 @@ def main(argv: list[str] | None = None) -> int:
         checks = []
         for schema in sorted(args.contracts.glob("*.schema.json")):
             name = schema.name.removesuffix(".schema.json")
-            samples = sorted((args.contracts / "samples").glob(f"{name}*.json")) + sorted(
-                (args.contracts / "samples").glob(f"{name}*.csv")
+            # <name>.sample.json (or .csv): "triage" must not pick up triage-input's samples.
+            samples = sorted((args.contracts / "samples").glob(f"{name}.*.json")) + sorted(
+                (args.contracts / "samples").glob(f"{name}.*.csv")
             )
             if not samples:
                 print(f"FAILED: contract '{name}' has no sample in contracts/samples/")
