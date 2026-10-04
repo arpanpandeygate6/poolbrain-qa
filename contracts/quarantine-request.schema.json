@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "quarantine-request",
+  "title": "quarantine-request",
+  "description": "A request to quarantine one flaky test, made by n8n W3b after a QA member reacted 🔁 (Story 6.6) or by hand, and the input of the quarantine workflow (Story 6.5). The owner's Jira ticket exists before the request is made.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "test_id",
+    "owner",
+    "jira_key",
+    "deadline",
+    "rerun_evidence",
+    "marked_by"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "test_id": {
+      "type": "string",
+      "pattern": "^(api:[^\\s]+::.+|ui:.+ > .+)$"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\n]+$",
+      "description": "Who fixes the test: the flow owner from flows/inventory.yaml by default."
+    },
+    "jira_key": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]+-[0-9]+$",
+      "description": "The owner's fix ticket."
+    },
+    "deadline": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Two weeks after the request, YYYY-MM-DD."
+    },
+    "rerun_evidence": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 300,
+      "pattern": "^[^\\n]+$",
+      "description": "Why it is flaky, for example 'passed on retry; failed 3 of the last 7 nights'."
+    },
+    "marked_by": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\n]+$",
+      "description": "The QA member who reacted 🔁 (name or email)."
+    },
+    "slack_thread": {
+      "type": "string",
+      "pattern": "^https://",
+      "description": "Link to the failure's Slack thread, if any."
+    },
+    "run_url": {
+      "type": "string",
+      "pattern": "^https://",
+      "description": "The nightly run where it failed, if any."
+    }
+  }
+}
