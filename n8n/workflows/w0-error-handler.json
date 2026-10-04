@@ -99,6 +99,16 @@
               "removed": false
             },
             {
+              "id": "todo_label",
+              "displayName": "todo_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
               "id": "links",
               "displayName": "links",
               "required": false,

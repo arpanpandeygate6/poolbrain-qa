@@ -1,7 +1,8 @@
 #!/bin/bash
 # Installs the shared "Slack: post message" sub-workflow and the W0 error
 # handler (Story 5.3), points the other workflows' errors at W0, and installs
-# the workflows that post to Slack (Story 5.7 Ready-for-QA notice).
+# the workflows that post to Slack: the gate check (Story 5.6) and the
+# Ready-for-QA notice (Story 5.7).
 #
 # Slack is optional. Without it, every message becomes a preview you can read
 # in the n8n execution, and nothing is sent. To turn Slack on later:
@@ -46,6 +47,8 @@ jq --arg ch "$SLACK_CHANNEL" \
 install /tmp/slack-post-message.json slackPostMsg0001
 rm -f /tmp/slack-post-message.json
 install workflows/w0-error-handler.json w0ErrorHandler1
+# The kill-switch and daily-cap check every AI action calls first (Story 5.6).
+install workflows/gate-check.json gateCheck0000001
 
 # Workflows that report their errors to W0 (settings.errorWorkflow in their
 # files). Re-importing turns a workflow off, so each is published again.

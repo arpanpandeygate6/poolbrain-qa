@@ -50,3 +50,34 @@ CREATE TABLE IF NOT EXISTS audit.checkpoints (
 );
 REVOKE ALL ON audit.checkpoints FROM PUBLIC, audit_writer;
 GRANT SELECT, INSERT, UPDATE ON audit.checkpoints TO audit_writer;
+
+-- Gate state (Story 5.6): the last kill-switch value seen, and the day each
+-- workflow's "waits until tomorrow" notice was last posted, so each notice
+-- goes out once per change or once per day. Not audit entries, so updatable.
+CREATE TABLE IF NOT EXISTS audit.relay_state (
+    name       text PRIMARY KEY,
+    value      text NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+REVOKE ALL ON audit.relay_state FROM PUBLIC, audit_writer;
+GRANT SELECT, INSERT, UPDATE ON audit.relay_state TO audit_writer;
+
+-- Requests the gate did not let through (AI work off, daily cap reached):
+-- kept here so nothing is lost. The workflow that made a request picks it up
+-- again once not_before has passed, in arrival order, and sets done_at.
+CREATE TABLE IF NOT EXISTS audit.deferred_requests (
+    id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    action     text NOT NULL CHECK (action IN ('dispatch', 'triage-post', 'quarantine', 'jira-write')),
+    workflow   text NOT NULL DEFAULT '',
+    target     text NOT NULL DEFAULT '',
+    payload    jsonb NOT NULL DEFAULT '{}',
+    reason     text NOT NULL CHECK (reason IN ('disabled', 'capped', 'caps-invalid')),
+    not_before timestamptz NOT NULL,
+    done_at    timestamptz
+);
+-- One open request per (action, workflow, target): asking again only updates it.
+CREATE UNIQUE INDEX IF NOT EXISTS deferred_requests_open
+    ON audit.deferred_requests (action, workflow, target) WHERE done_at IS NULL;
+REVOKE ALL ON audit.deferred_requests FROM PUBLIC, audit_writer;
+GRANT SELECT, INSERT, UPDATE ON audit.deferred_requests TO audit_writer;

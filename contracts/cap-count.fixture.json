@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "_about": "Shared test cases for the daily cap count (AR-11). Rule: count runs of the workflow created at or after 00:00 IST today (18:30 UTC the day before), excluding the current run and runs whose run-outcome status is capped, disabled or blocked. Runs still in progress or without an outcome are counted. Both implementations must pass every case: n8n's 'Gate: check' (scripts/tests/test_n8n_workflows.py) and the agent's shared first step (Story 4.4). In a run, outcome is the run-outcome status, or null when there is none yet.",
+  "cases": [
+    {
+      "name": "every outcome type around the 00:00 IST boundary",
+      "now": "2026-10-04T05:00:00Z",
+      "current_run_id": 9,
+      "runs": [
+        {"id": 1, "created_at": "2026-10-03T18:29:59Z", "status": "completed", "outcome": "ok"},
+        {"id": 2, "created_at": "2026-10-03T18:30:00Z", "status": "completed", "outcome": "ok"},
+        {"id": 3, "created_at": "2026-10-03T19:00:00Z", "status": "completed", "outcome": "capped"},
+        {"id": 4, "created_at": "2026-10-03T20:00:00Z", "status": "completed", "outcome": "disabled"},
+        {"id": 5, "created_at": "2026-10-03T21:00:00Z", "status": "completed", "outcome": "blocked"},
+        {"id": 6, "created_at": "2026-10-03T22:00:00Z", "status": "completed", "outcome": "error"},
+        {"id": 7, "created_at": "2026-10-04T01:00:00Z", "status": "in_progress", "outcome": null},
+        {"id": 8, "created_at": "2026-10-04T02:00:00Z", "status": "completed", "outcome": null},
+        {"id": 9, "created_at": "2026-10-04T04:59:00Z", "status": "in_progress", "outcome": null}
+      ],
+      "expected": 4
+    },
+    {
+      "name": "one minute before 00:00 IST still counts the day that is ending",
+      "now": "2026-10-03T18:29:00Z",
+      "current_run_id": null,
+      "runs": [
+        {"id": 10, "created_at": "2026-10-02T18:29:00Z", "status": "completed", "outcome": "ok"},
+        {"id": 11, "created_at": "2026-10-02T18:30:00Z", "status": "completed", "outcome": "ok"},
+        {"id": 12, "created_at": "2026-10-03T18:00:00Z", "status": "completed", "outcome": "ok"}
+      ],
+      "expected": 2
+    },
+    {
+      "name": "right after 00:00 IST the count starts again",
+      "now": "2026-10-03T18:30:00Z",
+      "current_run_id": null,
+      "runs": [
+        {"id": 12, "created_at": "2026-10-03T18:00:00Z", "status": "completed", "outcome": "ok"},
+        {"id": 13, "created_at": "2026-10-03T18:30:00Z", "status": "queued", "outcome": null}
+      ],
+      "expected": 1
+    },
+    {
+      "name": "before dispatch (n8n): no current run",
+      "now": "2026-10-04T12:00:00Z",
+      "current_run_id": null,
+      "runs": [
+        {"id": 20, "created_at": "2026-10-04T06:00:00Z", "status": "completed", "outcome": "ok"},
+        {"id": 21, "created_at": "2026-10-04T07:00:00Z", "status": "completed", "outcome": "capped"}
+      ],
+      "expected": 1
+    },
+    {
+      "name": "no runs today",
+      "now": "2026-10-04T12:00:00Z",
+      "current_run_id": null,
+      "runs": [],
+      "expected": 0
+    }
+  ]
+}
