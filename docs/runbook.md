@@ -301,6 +301,32 @@ Nothing below exists yet. The code above is ready for it.
 
 **Checked on 4 Oct 2026 (unit tests only, as no agent workflow exists yet):** the counting rule passes every case in the shared fixture. Each way of stopping (switch off or any other value, limit reached with outcomes read from artifacts, broken or missing limits) stops before GitHub or a model is asked, and writes a valid `run-outcome`. The first live run will be the `draft-cases` workflow (Story 4.5).
 
+### `draft-cases` workflow (Story 4.5)
+
+**Actions → draft-cases → Run workflow** (on `main`), with the ticket key and the ticket text. **Paste only sanitized text:** no customer data, secrets or links to them. n8n W1 will start it the same way later. In order, it:
+1. writes the ticket text to a file and hides every line of it from the log;
+2. checks the key (otherwise `error`, `invalid-ticket-key`);
+3. runs the shared first step (kill switch and daily limit, Story 4.4);
+4. checks that the agent is set up: the Claude token, `QA_AGENT_APP_ID` and the `qa-agent` private key. Otherwise it ends `error`, `agent-not-set-up`, before any model call, saying what is missing;
+5. stops if `cases/<KEY>.md` is already on `main` (`blocked`, `cases-already-on-main`), or if PR 1 is already open (`ok`, `already-open`, with that PR's link; no second PR);
+6. runs the agent (`anthropics/claude-code-action`, pinned to the commit of v1.0.241). It gets the `/draft-cases` steps, and only file tools plus the case, flow and contract checkers; web tools are denied and full output is off. If no flow fits, or the text has no acceptance criteria, it writes nothing and the run ends `blocked` (`no-matching-flow` or `no-acceptance-criteria`) with its one-line reason;
+7. checks the output with `scripts/agent_cases.py check`: the case file and questions file must pass `case_lint`, and nothing else may have changed. Otherwise it ends `error`, `invalid-output`, and no PR is opened;
+8. saves the questions as the artifact `questions` (for n8n W6), then, as the `qa-agent` app, pushes `agent/<KEY>-cases` and opens PR 1 with the Cases template, so `ci` runs on it;
+9. always saves `run-outcome`. An agent step that fails (Claude Max limit, expired token) ends `error`, `agent-failed`, with the hint that a QA member can run `/draft-cases` on a laptop instead.
+
+**Secrets it expects** (Story 4.4 setup): the secret `CLAUDE_CODE_OAUTH_TOKEN`, the variable `QA_AGENT_APP_ID` and the secret `QA_AGENT_PRIVATE_KEY`, wherever the team decides on GitHub Free. It holds no UAT, database or Slack secret, and runs only from `main`.
+
+**Known gap on GitHub Free: pushing to `main`.** The story expects branch protection to refuse an agent push to `main`. Free has no branch protection, so the `qa-agent` app's "Contents: write" could technically push to `main`. What stops it today:
+- the agent has no git or shell tools beyond the named checkers;
+- the workflow pushes only the explicit `refs/heads/agent/<KEY>-cases`;
+- a test checks the workflow file for that.
+
+On a plan with branch protection, protect `main` and record here that an agent push is refused.
+
+**Try it now, before the setup exists:** run it with any key, for example `PM-1`. With `AGENT_ENABLED` not created yet, it should end at step 3 with "Result: Not run (agent is turned off)" and a `run-outcome` artifact whose status is `disabled`. That checks the shared first and last steps live.
+
+**Checked on 4 Oct 2026 (unit tests only):** every decision above, including a run that ends `ok` with the PR link and an invalid key recorded as an empty ticket. The full run waits for the Story 4.4 setup.
+
 ## Kill switch and daily limits (Story 5.6)
 
 **Turning AI work off and on.** In GitHub: **Settings → Secrets and variables → Actions → Variables**, the repository variable `AGENT_ENABLED`. Only the exact value `true` lets AI work run. `false`, any other value, or no variable at all counts as off. Only people change it (the QA lead or n8n maintainer), never a workflow.
