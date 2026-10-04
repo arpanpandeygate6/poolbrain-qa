@@ -119,6 +119,16 @@
               "removed": false
             },
             {
+              "id": "legend",
+              "displayName": "legend",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
               "id": "thread_ts",
               "displayName": "thread_ts",
               "required": false,

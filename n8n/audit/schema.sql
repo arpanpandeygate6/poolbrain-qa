@@ -147,3 +147,6 @@ CREATE TABLE IF NOT EXISTS audit.message_map (
 );
 REVOKE ALL ON audit.message_map FROM PUBLIC, audit_writer;
 GRANT SELECT, INSERT ON audit.message_map TO audit_writer;
+-- What W3 already posted for a nightly run ("s3", "test:<test_id>"), so a retry
+-- after a Slack failure never posts the same message twice.
+ALTER TABLE audit.triage_requests ADD COLUMN IF NOT EXISTS posted jsonb NOT NULL DEFAULT '[]';
