@@ -1,0 +1,219 @@
+# Nightly regression run (Story 2.3, FR-05): the whole pack every night at
+# 02:30 IST, after every merge to main, and on manual "Run workflow".
+#
+# Prototype: it runs against the pretend PoolBrain (no UAT access yet), so the
+# tests job has no `uat-nightly` Environment (GitHub Free has none). With UAT
+# access, add `environment: uat-nightly` to the tests job and replace the
+# "Start the pretend PoolBrain" step (see docs/runbook.md).
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 21 * * *"  # 21:00 UTC = 02:30 IST, after the 01:00–02:00 IST UAT reset
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only one nightly or post-merge run at a time; a new one waits.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  reset-window:
+    name: Check the UAT reset window
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        run: |
+          now="$(TZ=Asia/Kolkata date +%H%M)"
+          if [ "${{ github.event_name }}" != schedule ] && [ "$now" -ge 0100 ] && [ "$now" -lt 0230 ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## nightly — Not run"
+              echo
+              echo "Not run: UAT reset window (01:00–02:00 IST). The scheduled 02:30 IST run covers this change."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  tests:
+    name: Regression pack
+    needs: reset-window
+    if: needs.reset-window.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    # Starts 02:30 IST; 180 minutes ends it by 05:30 IST, before the 06:00 IST deadline.
+    # A timed-out run fails.
+    timeout-minutes: 180
+    outputs:
+      report-url: ${{ steps.report.outputs.report-url }}
+    env:
+      POOLBRAIN_ENV: uat
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            api-tests/requirements.txt
+            mock-poolbrain/requirements.txt
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: ui-tests/package-lock.json
+
+      - name: Install packages and browser
+        run: |
+          pip install -r api-tests/requirements.txt
+          cd ui-tests && npm ci && npx playwright install --with-deps chromium
+
+      - name: List tests and their flows
+        run: python scripts/flow_lint.py --json "$RUNNER_TEMP/tests.json"
+
+      - name: Start the pretend PoolBrain
+        uses: ./.github/actions/start-mock-poolbrain
+
+      - name: API tests (one retry)
+        id: api
+        continue-on-error: true
+        working-directory: api-tests
+        run: python -m pytest --reruns 1
+
+      - name: UI tests (two retries)
+        id: ui
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        working-directory: ui-tests
+        run: npx playwright test --retries 2
+
+      - name: Test report
+        id: report
+        if: always()
+        uses: ./.github/actions/test-report
+        with:
+          name: nightly
+
+      - name: Job summary
+        id: summary
+        if: always()
+        run: |
+          outcome=failure
+          if [ "${{ steps.api.outcome }}" = success ] && [ "${{ steps.ui.outcome }}" = success ]; then outcome=success; fi
+          if [ "${{ github.event_name }}" = schedule ]; then started="schedule"; else started="@${{ github.triggering_actor }} (${{ github.event_name }})"; fi
+          python scripts/run_summary.py --title nightly --outcome "$outcome" \
+            --detail "Commit=\`${GITHUB_SHA::7}\`" \
+            --detail "Started by=$started" \
+            --detail "Time=$(TZ=Asia/Kolkata date '+%d %b %Y %H:%M IST')" \
+            --report-url "${{ steps.report.outputs.report-url }}" \
+            --quarantine flows/quarantine.yaml \
+            --tests-json "$RUNNER_TEMP/tests.json" \
+            --results-json "$RUNNER_TEMP/results.json" \
+            --note "A red nightly blocks UAT sign-off." \
+            --suite API=api-tests/reports/allure-results \
+            --suite UI=ui-tests/reports/allure-results
+
+      - name: Coverage
+        if: always()
+        run: |
+          python scripts/flow_coverage.py --tests-json "$RUNNER_TEMP/tests.json" --results-json "$RUNNER_TEMP/results.json"
+
+      # Per-test results, kept so later runs can show each test's last 7 nights (Story 2.4).
+      - name: Upload per-test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-results-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 30
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/results.json
+            ${{ runner.temp }}/tests.json
+
+      - name: Fail the run when tests failed
+        if: always() && steps.summary.outputs.verdict != 'passed'
+        run: |
+          echo "nightly FAILED: see the job summary. A red nightly blocks UAT sign-off."
+          exit 1
+
+  # Story 2.4: the plain failure list for Slack, built by a separate job that holds
+  # no test credentials. Slack is not set up yet: the job shows the message as a
+  # preview in its summary. When the Slack app and `notify` Environment exist, add
+  # `environment: notify` and pass SLACK_BOT_TOKEN from it (see docs/runbook.md).
+  report:
+    name: Failure list
+    needs: tests
+    if: always() && needs.tests.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Install the contract validator
+        run: pip install "$(grep -i '^jsonschema==' api-tests/requirements.txt)" "$(grep -i '^PyYAML==' api-tests/requirements.txt)"
+
+      - name: Get tonight's per-test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-results-${{ github.run_id }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/current
+
+      - name: Get the last 7 scheduled nightly runs' results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          history="$RUNNER_TEMP/history"
+          mkdir -p "$history"
+          gh api "repos/${{ github.repository }}/actions/workflows/nightly.yml/runs?event=schedule&status=completed&per_page=8" \
+            --jq '[.workflow_runs[] | select(.id != ${{ github.run_id }}) | {id, created_at}] | .[:7]' > "$history/index.json"
+          for id in $(jq -r '.[].id' "$history/index.json"); do
+            gh run download "$id" -R "${{ github.repository }}" -p 'nightly-results-*' -D "$history/$id" 2>/dev/null || continue
+            found="$(find "$history/$id" -name results.json | head -1)"
+            [ -n "$found" ] && [ "$found" != "$history/$id/results.json" ] && mv "$found" "$history/$id/results.json"
+          done
+          echo "Earlier nights with results: $(find "$history" -name results.json | wc -l)"
+
+      - name: Build the failure list
+        env:
+          TRIAGE_LIVE: ${{ vars.TRIAGE_LIVE }}
+          SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+        run: |
+          if [ "${{ github.event_name }}" = schedule ]; then when="$(TZ=Asia/Kolkata date '+%d %b') 02:30 IST"; else when="$(TZ=Asia/Kolkata date '+%d %b %H:%M IST')"; fi
+          python scripts/failure_list.py \
+            --results-json "$RUNNER_TEMP/current/results.json" \
+            --history-dir "$RUNNER_TEMP/history" \
+            --run-id "${{ github.run_id }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --report-url "${{ needs.tests.outputs.report-url }}" \
+            --date "$when" \
+            --out "$RUNNER_TEMP/failure-list.json"
+
+      - name: Save failure-list
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-list
+          path: ${{ runner.temp }}/failure-list.json
+          retention-days: 30
+          if-no-files-found: ignore

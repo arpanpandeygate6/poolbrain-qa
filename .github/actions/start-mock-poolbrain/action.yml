@@ -1,7 +1,7 @@
 name: Start the pretend PoolBrain
 description: >-
-  Makes up test accounts for this run, points both suites at the pretend
-  PoolBrain (mock-poolbrain/) and starts it in the background.
+  Makes up test accounts and database passwords for this run, starts MySQL
+  and the pretend PoolBrain (mock-poolbrain/), and points both suites at them.
 inputs:
   tools-path:
     description: Folder that holds mock-poolbrain/ (a checkout of main)
@@ -9,11 +9,13 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Make up test accounts for this run
+    - name: Make up accounts and passwords for this run
       shell: bash
       run: |
         password="$(openssl rand -hex 16)"
-        echo "::add-mask::$password"
+        root_password="$(openssl rand -hex 16)"
+        readonly_password="$(openssl rand -hex 16)"
+        for secret in "$password" "$root_password" "$readonly_password"; do echo "::add-mask::$secret"; done
         {
           echo "API_BASE_URL=http://127.0.0.1:5050/api"
           echo "BASE_URL=http://127.0.0.1:5050"
@@ -21,14 +23,33 @@ runs:
           echo "OFFICE_ADMIN_PASSWORD=$password"
           echo "API_USER_EMAIL=api.user@example.test"
           echo "API_USER_PASSWORD=$password"
+          echo "MOCK_DB_ROOT_PASSWORD=$root_password"
+          echo "DB_HOST=127.0.0.1"
+          echo "DB_PORT=3307"
+          echo "DB_NAME=poolbrain"
+          echo "DB_USER=qa_readonly"
+          echo "DB_PASSWORD=$readonly_password"
         } >> "$GITHUB_ENV"
+
+    - name: Start MySQL
+      shell: bash
+      run: |
+        image="$(grep -oE 'mysql:[0-9.]+' "${{ inputs.tools-path }}/mock-poolbrain/docker-compose.yml")"
+        docker run -d --name mock-mysql -e MYSQL_ROOT_PASSWORD -p 127.0.0.1:3307:3306 "$image" >/dev/null
+        for i in $(seq 1 60); do
+          docker exec mock-mysql mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent 2>/dev/null && exit 0
+          sleep 2
+        done
+        echo "MySQL did not start:"; docker logs mock-mysql | tail -20; exit 1
+      env:
+        MYSQL_ROOT_PASSWORD: ${{ env.MOCK_DB_ROOT_PASSWORD }}
 
     - name: Start the pretend PoolBrain
       shell: bash
       run: |
         pip install -q -r "${{ inputs.tools-path }}/mock-poolbrain/requirements.txt"
         python "${{ inputs.tools-path }}/mock-poolbrain/app.py" > "$RUNNER_TEMP/mock-poolbrain.log" 2>&1 &
-        for i in $(seq 1 30); do
+        for i in $(seq 1 60); do
           python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/api/health')" 2>/dev/null && exit 0
           sleep 1
         done

@@ -19,6 +19,14 @@ ENVIRONMENTS = ("uat", "preprod", "prod", "npp")
 # Only smoke tests may run here: no writes, testing company only.
 READ_ONLY_ENVIRONMENTS = ("preprod", "prod", "npp")
 
+# How long ReadReplica.wait_for_row keeps retrying, in seconds (AR-13). The
+# replica lags behind the primary; integrations that sync in the background
+# (for example QBO) need longer. Set every timeout here, nowhere else.
+REPLICA_TIMEOUTS = {
+    "default": 30,
+    "qbo-sync": 180,
+}
+
 
 @dataclass(frozen=True)
 class Settings:

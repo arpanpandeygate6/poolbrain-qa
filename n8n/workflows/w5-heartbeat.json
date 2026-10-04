@@ -59,6 +59,9 @@
           "name": "qa-relay"
         }
       },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
       "onError": "continueErrorOutput"
     },
     {
@@ -85,7 +88,10 @@
           "id": "rtFV51PZnrrirWP0",
           "name": "qa-relay"
         }
-      }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
     }
   ],
   "connections": {

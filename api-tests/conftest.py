@@ -39,6 +39,16 @@ def api(settings) -> ApiClient:
 
 
 @pytest.fixture(scope="session")
+def logged_in_api(api, settings) -> ApiClient:
+    """The API client, logged in as the role test account."""
+    if not (settings.api_user_email and settings.api_user_password):
+        pytest.skip(f"API_USER_EMAIL and API_USER_PASSWORD are not set for {settings.env}")
+    response = api.login(settings.api_user_email, settings.api_user_password)
+    assert response.status_code == 200, f"Login for the test session failed: {response.status_code}"
+    return api
+
+
+@pytest.fixture(scope="session")
 def db(settings) -> ReadReplica:
     if not settings.db_host:
         pytest.skip(f"DB_HOST is not set for {settings.env}")

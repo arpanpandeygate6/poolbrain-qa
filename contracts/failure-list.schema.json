@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "failure-list",
+  "title": "failure-list",
+  "description": "Last night's failures and passed-on-retry tests, saved by the nightly report job after the Slack post (Story 2.4, AD-5). Consumers: triage (Epic 6), n8n W2/W3.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "nightly_run_id",
+    "slack_channel",
+    "slack_ts",
+    "failures"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "nightly_run_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "slack_channel": {
+      "type": "string",
+      "minLength": 1
+    },
+    "slack_ts": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "test_id",
+          "flow_id",
+          "attempts",
+          "history",
+          "status",
+          "flaky_candidate"
+        ],
+        "properties": {
+          "test_id": {
+            "type": "string",
+            "pattern": "^(api:[^\\s]+::.+|ui:.+ > .+)$"
+          },
+          "flow_id": {
+            "type": "string",
+            "pattern": "^([a-z0-9]+(-[a-z0-9]+)*)?$",
+            "description": "Empty when the test's flow is unknown."
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "history": {
+            "type": "array",
+            "maxItems": 7,
+            "description": "The last 7 nights before this one, newest first. Fewer when fewer earlier runs exist.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "nightly_run_id",
+                "result"
+              ],
+              "properties": {
+                "nightly_run_id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "result": {
+                  "enum": [
+                    "passed",
+                    "failed",
+                    "passed-on-retry",
+                    "quarantined",
+                    "not-run"
+                  ]
+                }
+              }
+            }
+          },
+          "status": {
+            "enum": [
+              "failed",
+              "quarantined",
+              "passed-on-retry"
+            ]
+          },
+          "flaky_candidate": {
+            "type": "boolean",
+            "description": "True for tests that passed on retry."
+          }
+        }
+      }
+    }
+  }
+}

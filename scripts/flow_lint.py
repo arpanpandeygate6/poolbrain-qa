@@ -14,6 +14,8 @@ Usage (from the repo root):
     api-tests/.venv/bin/python scripts/flow_lint.py
 
 Exit code 0 when every test is tagged with one known flow, 1 otherwise.
+With --json PATH it also writes every test's ID, suite, flows and skip/fixme
+status, for the run summary and the coverage report.
 """
 
 import argparse
@@ -240,6 +242,7 @@ def report(flow_ids: list[str], tests: list[TestCase], problems: list[tuple[str,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--root", type=Path, default=SCRIPTS_DIR.parent, help="repository root")
+    parser.add_argument("--json", type=Path, help="also write the list of tests to this JSON file")
     args = parser.parse_args(argv)
     root = args.root.resolve()
 
@@ -252,6 +255,11 @@ def main(argv: list[str] | None = None) -> int:
 
     problems = find_problems(flow_ids, tests)
     print(report(flow_ids, tests, problems))
+    if args.json:
+        records = [
+            {"test_id": t.test_id, "suite": t.suite, "flows": t.flows, "status": t.status} for t in tests
+        ]
+        args.json.write_text(json.dumps(records, indent=2), encoding="utf-8")
     return 1 if problems else 0
 
 

@@ -34,5 +34,18 @@ class ApiClient:
                 self.session.headers["Authorization"] = f"Bearer {token}"
         return response
 
+    def customers(self) -> requests.Response:
+        return self.get("customers")
+
+    def create_job(self, name: str, customer_id: int, job_type: str, scheduled_date: str) -> requests.Response:
+        """Create a job. scheduled_date is YYYY-MM-DD."""
+        return self.post(
+            "jobs",
+            json={"name": name, "customer_id": customer_id, "job_type": job_type, "scheduled_date": scheduled_date},
+        )
+
+    def get_job(self, job_id: int) -> requests.Response:
+        return self.get(f"jobs/{job_id}")
+
     def close(self) -> None:
         self.session.close()

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "nightly_run_id": 18200000001,
+  "slack_channel": "C0123456789",
+  "slack_ts": "1790900000.123456",
+  "failures": [
+    {
+      "test_id": "api:tests/test_job_creation.py::test_api_job_is_saved_with_entered_details",
+      "flow_id": "job-creation",
+      "attempts": 2,
+      "history": [
+        {
+          "nightly_run_id": 18100000001,
+          "result": "passed"
+        },
+        {
+          "nightly_run_id": 18000000001,
+          "result": "failed"
+        }
+      ],
+      "status": "failed",
+      "flaky_candidate": false
+    },
+    {
+      "test_id": "ui:tests/job-creation.spec.ts > Job creation > office admin creates a job",
+      "flow_id": "job-creation",
+      "attempts": 2,
+      "history": [],
+      "status": "passed-on-retry",
+      "flaky_candidate": true
+    }
+  ]
+}
