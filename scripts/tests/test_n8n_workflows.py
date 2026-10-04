@@ -5,6 +5,7 @@ and `$(...)`, so the message wording and the error cleaning are checked
 without a running n8n.
 """
 
+import copy
 import json
 import shutil
 import subprocess
@@ -1079,3 +1080,93 @@ def test_w3_posting_is_gated():
     gate_input = next(n for n in W3["nodes"] if n["name"] == "To the gate")["parameters"]["jsCode"]
     assert "action: 'triage-post'" in gate_input
     assert W3["settings"]["errorWorkflow"] == W0["id"]
+
+
+# ---------------------------------------------------------------- W6 Questions poster (Story 6.7, part 1)
+
+W6 = workflow("w6-questions-poster.json")
+QUESTIONS = json.loads((ROOT / "contracts" / "samples" / "questions.sample.json").read_text())
+Q1 = QUESTIONS["questions"][0]
+
+QUESTION_CASES = [
+    QUESTIONS,
+    {**QUESTIONS, "questions": []},
+    {**QUESTIONS, "schema_version": 2},
+    {"ticket": "PM-1", "schema_version": 1, "questions": []},
+    {**QUESTIONS, "extra": 1},
+    {**QUESTIONS, "ticket": "pm-1"},
+    {**QUESTIONS, "questions": [Q1] * 11},
+    {**QUESTIONS, "questions": [{**Q1, "number": 0}]},
+    {**QUESTIONS, "questions": [{**Q1, "question": "short"}]},
+    {**QUESTIONS, "questions": [{**Q1, "about": "x" * 201}]},
+    {**QUESTIONS, "questions": [{**Q1, "colour": "red"}]},
+    {**QUESTIONS, "questions": [{k: v for k, v in Q1.items() if k != "about"}]},
+    {**QUESTIONS, "questions": "none"},
+]
+
+
+@needs_node
+def test_w6_contract_copy_agrees_with_the_python_validator():
+    from validate_contract import ContractError, validate
+
+    reads = [{"found": True, "data": case} for case in QUESTION_CASES]
+    runs = [{"run_id": str(i)} for i in range(len(QUESTION_CASES))]
+    code = code_of(W6, "Check questions").replace("$input.all()", json.dumps([{"json": r} for r in reads]))
+    out = run_code(code, {}, {"New runs": runs})
+    for case, result in zip(QUESTION_CASES, out):
+        try:
+            validate("questions", copy.deepcopy(case))
+            valid = True
+        except ContractError:
+            valid = False
+        assert (result["state"] != "invalid") == valid, (case, result)
+
+
+@needs_node
+def test_w6_states():
+    reads = [{"found": False}, {"found": True, "data": {**QUESTIONS, "questions": []}}, {"found": True, "data": QUESTIONS}]
+    code = code_of(W6, "Check questions").replace("$input.all()", json.dumps([{"json": r} for r in reads]))
+    out = run_code(code, {}, {"New runs": [{"run_id": "1"}, {"run_id": "2"}, {"run_id": "3"}]})
+    assert [o["state"] for o in out] == ["none", "none", "to-post"]
+    assert out[2]["ticket"] == "PM-1234" and len(out[2]["questions"]) == 2
+
+
+@needs_node
+def test_w6_new_runs_skip_handled_and_waiting():
+    nodes = {"Known runs": {"handled": ["1"], "waiting": ["2"]}, "Settings": {"repo": "o/r"},
+             "draft-cases runs": {"workflow_runs": [
+                 {"id": 1, "status": "completed", "conclusion": "success"},
+                 {"id": 2, "status": "completed", "conclusion": "success"},
+                 {"id": 3, "status": "completed", "conclusion": "success"},
+                 {"id": 4, "status": "completed", "conclusion": "failure"},
+                 {"id": 5, "status": "in_progress", "conclusion": None}]}}
+    assert run_code(code_of(W6, "New runs"), {}, nodes) == [{"repo": "o/r", "run_id": "3", "name": "questions"}]
+
+
+@needs_node
+def test_w6_message():
+    allowed = [{"run_id": "3", "ticket": "PM-1234", "questions": list(reversed(QUESTIONS["questions"]))}]
+    code = code_of(W6, "Message").replace("$input.all()", json.dumps([{"json": {"found": True, "data": {"pr_url": "https://github.com/o/r/pull/5"}}}]))
+    [m] = run_code(code, {}, {"Allowed runs": allowed, "Settings": {"jira_url": "https://jira"}})
+    assert m["header"] == "Questions about PM-1234 before testing" and m["kind"] == "" and m["thread_ts"] == ""
+    assert m["body"].splitlines() == ["The agent found unclear acceptance criteria:",
+                                      f"1. {QUESTIONS['questions'][0]['question']}", f"2. {QUESTIONS['questions'][1]['question']}"]
+    assert m["todo"] == "react ✅ to add these to PM-1234 as a comment naming you. Nothing goes to Jira without ✅."
+    assert [link["label"] for link in m["links"]] == ["PR 1", "Jira PM-1234"]
+    assert m["legend"] == "React: ✅ Approve (send to Jira) · ↩️ Undo within 24 h"
+
+
+@needs_node
+def test_w6_rows_and_reports():
+    checked = [{"run_id": "1", "state": "none", "ticket": ""}, {"run_id": "2", "state": "invalid", "ticket": "", "problem": "bad"},
+               {"run_id": "3", "state": "to-post", "ticket": "PM-1"}, {"run_id": "4", "state": "to-post", "ticket": "PM-2"}]
+    nodes = {"Check questions": checked, "Message": [{"run_id": "3"}],
+             "Post": [{"posted": True, "channel": "C1", "ts": "1.2"}]}
+    rows = run_code(code_of(W6, "Rows to save"), {}, nodes)
+    assert [(r["run_id"], r["state"], r["ts"]) for r in rows] == [("1", "none", ""), ("2", "invalid", ""), ("3", "posted", "1.2")]
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_code(code_of(W6, "Report problems"), {}, nodes)
+    assert "questions file of draft-cases run 2 is not valid: bad" in failure.value.stderr
+    assert W6["settings"]["errorWorkflow"] == W0["id"]
+    gate = next(n for n in W6["nodes"] if n["name"] == "To the gate")["parameters"]["jsCode"]
+    assert "action: 'questions-post'" in gate
