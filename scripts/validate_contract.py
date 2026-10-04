@@ -4,6 +4,10 @@
 Rules: `schema_version` must be the file's first field, its value must be one the
 schema knows (anything else is rejected), and the file must match the schema.
 
+CSV contracts (a schema with "x-csv-columns", for example audit-export) are checked
+row by row instead: the header row must be exactly those columns in that order,
+the file must use standard CSV quoting, and every row must match the schema.
+
 Usage:
     python scripts/validate_contract.py failure-list path/to/failure-list.json
     python scripts/validate_contract.py --samples   # every contracts/samples/<name>*.json
@@ -11,6 +15,8 @@ Exit code 0 when valid, 1 otherwise. Producers call validate() before saving.
 """
 
 import argparse
+import csv
+import io
 import json
 import sys
 from pathlib import Path
@@ -49,7 +55,32 @@ def validate(name: str, data: dict, contracts: Path = CONTRACTS) -> None:
         raise ContractError(f"{name}: at {where}: {first.message}{more}")
 
 
+def validate_csv(name: str, text: str, contracts: Path = CONTRACTS) -> None:
+    """Raise ContractError when CSV `text` doesn't follow CSV contract `name`."""
+    schema = load_schema(name, contracts)
+    columns = schema.get("x-csv-columns")
+    if not columns:
+        raise ContractError(f"{name}: not a CSV contract")
+    try:
+        rows = list(csv.reader(io.StringIO(text, newline=""), strict=True))
+    except csv.Error as e:
+        raise ContractError(f"{name}: not valid CSV: {e}")
+    if not rows or rows[0] != columns:
+        raise ContractError(f"{name}: the header row must be exactly: {','.join(columns)}")
+    validator = Draft202012Validator(schema)
+    for number, row in enumerate(rows[1:], start=2):
+        if len(row) != len(columns):
+            raise ContractError(f"{name}: line {number} has {len(row)} fields, expected {len(columns)}")
+        error = next(iter(sorted(validator.iter_errors(dict(zip(columns, row))), key=lambda e: list(e.path))), None)
+        if error:
+            where = "/".join(str(p) for p in error.absolute_path) or "(row)"
+            raise ContractError(f"{name}: line {number}, {where}: {error.message}")
+
+
 def validate_file(name: str, path: Path, contracts: Path = CONTRACTS) -> None:
+    if path.suffix == ".csv":
+        validate_csv(name, path.read_text(encoding="utf-8"), contracts)
+        return
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
@@ -69,7 +100,9 @@ def main(argv: list[str] | None = None) -> int:
         checks = []
         for schema in sorted(args.contracts.glob("*.schema.json")):
             name = schema.name.removesuffix(".schema.json")
-            samples = sorted((args.contracts / "samples").glob(f"{name}*.json"))
+            samples = sorted((args.contracts / "samples").glob(f"{name}*.json")) + sorted(
+                (args.contracts / "samples").glob(f"{name}*.csv")
+            )
             if not samples:
                 print(f"FAILED: contract '{name}' has no sample in contracts/samples/")
                 return 1

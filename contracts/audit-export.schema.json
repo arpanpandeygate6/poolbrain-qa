@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "audit-export",
+  "title": "audit-export",
+  "description": "The weekly audit log as CSV, posted by n8n W7 as audit-<end date>.csv (Story 7.2, AD-12). A header row with exactly these columns in this order, standard CSV quoting (fields with commas, quotes or line breaks are quoted, quotes doubled), CRLF line ends, UTF-8, oldest entry first. Each row below follows this schema. A CSV can't carry schema_version: a breaking change gets a new contract name.",
+  "x-csv-columns": ["ts", "actor", "actor_type", "action", "target", "link"],
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ts", "actor", "actor_type", "action", "target", "link"],
+  "properties": {
+    "ts": {
+      "description": "UTC, ISO-8601.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "actor": {
+      "description": "An email for people; agent:<workflow>, ci:<workflow> or n8n:<workflow> otherwise.",
+      "type": "string",
+      "pattern": "^([^@\\s]+@[^@\\s]+|(agent|ci|n8n):[a-z0-9][a-z0-9-]*)$"
+    },
+    "actor_type": {
+      "enum": ["human", "agent", "n8n", "ci"]
+    },
+    "action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target": {
+      "type": "string"
+    },
+    "link": {
+      "type": "string",
+      "pattern": "^(https?://\\S+)?$"
+    }
+  }
+}
