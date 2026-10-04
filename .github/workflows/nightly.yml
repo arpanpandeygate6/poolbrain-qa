@@ -247,3 +247,30 @@ jobs:
           path: ${{ runner.temp }}/triage-input.json
           retention-days: 30
           if-no-files-found: ignore
+
+      # Story 7.1: the run in brief, for n8n's daily QA update (W4) at 09:30 IST.
+      - name: Nightly summary
+        if: success() || failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          started="$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}" --jq .run_started_at)"
+          python scripts/nightly_summary.py \
+            --results-json "$RUNNER_TEMP/current/results.json" \
+            --tests-json "$RUNNER_TEMP/current/tests.json" \
+            --run-id "${{ github.run_id }}" \
+            --event "${{ github.event_name }}" \
+            --started-at "$started" \
+            --tests-result "${{ needs.tests.result }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --report-url "${{ needs.tests.outputs.report-url }}" \
+            --out "$RUNNER_TEMP/nightly-summary.json"
+
+      - name: Save nightly-summary
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-summary
+          path: ${{ runner.temp }}/nightly-summary.json
+          retention-days: 30
+          if-no-files-found: ignore

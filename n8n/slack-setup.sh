@@ -2,7 +2,7 @@
 # Installs the shared "Slack: post message" sub-workflow and the W0 error
 # handler (Story 5.3), points the other workflows' errors at W0, and installs
 # the workflows that post to Slack: the gate check (Story 5.6) and the
-# Ready-for-QA notice (Story 5.7).
+# Ready-for-QA notice (Story 5.7) and the daily QA update W4 (Story 7.1).
 #
 # Slack is optional. Without it, every message becomes a preview you can read
 # in the n8n execution, and nothing is sent. To turn Slack on later:
@@ -55,6 +55,7 @@ install workflows/gate-check.json gateCheck0000001
 install workflows/w5-heartbeat.json w5Heartbeat00001
 install workflows/audit-record-github-runs.json runRecorder00001
 install workflows/ready-for-qa-notice.json readyNotice00001
+install workflows/w4-daily-update.json w4DailyUpdate001
 
 docker compose restart n8n >/dev/null 2>&1
 if [ -n "$SLACK_CHANNEL" ]; then
