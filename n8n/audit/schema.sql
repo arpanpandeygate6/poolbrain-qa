@@ -203,3 +203,10 @@ ALTER TABLE audit.message_map ADD COLUMN IF NOT EXISTS bug_title text NOT NULL D
 -- reply was already posted for it. Nothing is deleted.
 ALTER TABLE audit.reaction_decisions ADD COLUMN IF NOT EXISTS undone_by text NOT NULL DEFAULT '';
 ALTER TABLE audit.reaction_decisions ADD COLUMN IF NOT EXISTS undo_closed_noted boolean NOT NULL DEFAULT false;
+
+-- Plain mode (W2 `triage_mode`, 5 Oct 2026): no AI triage in GitHub. W2 records
+-- a failed night as `plain`, and W3 posts one "Not classified" message per
+-- failure for it, without the gate.
+ALTER TABLE audit.triage_requests DROP CONSTRAINT IF EXISTS triage_requests_state_check;
+ALTER TABLE audit.triage_requests ADD CONSTRAINT triage_requests_state_check
+    CHECK (state IN ('dispatched', 'deferred', 'plain', 'posted', 'fallback'));

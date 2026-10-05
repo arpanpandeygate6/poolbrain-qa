@@ -931,16 +931,39 @@ def test_w2_needs_a_failure_list_and_puts_the_waiting_list_first():
     code = code_of(W2, "With failure-list").replace("$input.all()", json.dumps([
         {"json": {"artifacts": [{"name": "failure-list", "expired": False}]}}, {"json": {"artifacts": []}}]))
     assert run_code(code, {}, {"Candidates": [{"nightly_run_id": "12"}, {"nightly_run_id": "15"}]}) == [{"nightly_run_id": "12"}]
-    nodes = {"Due queue": {"due": [{"queue_id": 3, "nightly_run_id": "11"}]}, "With failure-list": [{"nightly_run_id": "12"}]}
+    nodes = {"Settings": {"triage_mode": "agent"}, "Due queue": {"due": [{"queue_id": 3, "nightly_run_id": "11"}]},
+             "With failure-list": [{"nightly_run_id": "12"}]}
     out = run_code(code_of(W2, "Requests to try"), {}, nodes)
     assert out == [
-        {"action": "dispatch", "workflow": "triage", "target": "11", "payload": {"nightly_run_id": "11"}, "queue_id": 3},
-        {"action": "dispatch", "workflow": "triage", "target": "12", "payload": {"nightly_run_id": "12"}, "queue_id": 0},
+        {"action": "dispatch", "workflow": "triage", "target": "11", "payload": {"nightly_run_id": "11"}, "queue_id": 3, "plain": False},
+        {"action": "dispatch", "workflow": "triage", "target": "12", "payload": {"nightly_run_id": "12"}, "queue_id": 0, "plain": False},
     ]
 
 
+@needs_node
+@pytest.mark.parametrize("mode", ["plain", "", "Agent", None])
+def test_w2_plain_mode_is_the_default_and_skips_the_waiting_list(mode):
+    nodes = {"Settings": {"repo": "o/r"} if mode is None else {"triage_mode": mode},
+             "Due queue": {"due": [{"queue_id": 3, "nightly_run_id": "11"}]}, "With failure-list": [{"nightly_run_id": "12"}]}
+    out = run_code(code_of(W2, "Requests to try"), {}, nodes)
+    assert [(o["target"], o["plain"]) for o in out] == [("12", True)]
+
+
+def test_w2_plain_nights_are_recorded_without_the_gate():
+    settings = next(n for n in W2["nodes"] if n["name"] == "Settings")["parameters"]["assignments"]["assignments"]
+    assert {"name": "triage_mode", "value": "plain"}.items() <= next(a for a in settings if a["name"] == "triage_mode").items()
+    assert W2["connections"]["Anything to try?"]["main"][0][0]["node"] == "Plain?"
+    assert W2["connections"]["Plain?"]["main"][0][0]["node"] == "Record plain"
+    assert W2["connections"]["Plain?"]["main"][1][0]["node"] == "Gate"
+    record = next(n for n in W2["nodes"] if n["name"] == "Record plain")["parameters"]
+    assert "VALUES ($1::bigint, 'plain', 'plain')" in record["query"] and "ON CONFLICT (nightly_run_id) DO NOTHING" in record["query"]
+    assert "Record plain" not in W2["connections"]  # no dispatch, no audit entry: W3 audits the post
+    schema = (ROOT / "n8n" / "audit" / "schema.sql").read_text()
+    assert "CHECK (state IN ('dispatched', 'deferred', 'plain', 'posted', 'fallback'))" in schema
+
+
 def test_w2_starts_triage_only_through_the_gate():
-    assert W2["connections"]["Anything to try?"]["main"][0][0]["node"] == "Gate"
+    assert W2["connections"]["Plain?"]["main"][1][0]["node"] == "Gate"  # agent mode
     assert W2["connections"]["Allowed?"]["main"][0][0]["node"] == "Start triage"
     start = next(n for n in W2["nodes"] if n["name"] == "Start triage")
     assert "triage.yml/dispatches" in start["parameters"]["url"] and "ref: 'main'" in start["parameters"]["jsonBody"]
@@ -1007,11 +1030,21 @@ def test_w3_deferred_and_gate_back_off():
     assert w3_decide([open_request(minutes_ago=61, post_wait_until=later)]) == []
 
 
+@needs_node
+def test_w3_plain_nights_fall_back_at_once_without_the_gate():
+    [d] = w3_decide([open_request(state="plain", minutes_ago=0)])
+    assert (d["mode"], d["reason"], d["gated"], d["triage_run_id"]) == ("fallback", "plain", False, "")
+    finished = [{"nightly_run_id": "7", "triage_run_id": "70"}]
+    [d] = w3_decide([open_request()], finished, [{"status": "ok"}])
+    assert d["gated"] is True
+    assert "'plain'" in next(n for n in W3["nodes"] if n["name"] == "Open requests")["parameters"]["query"]
+
+
 def w3_messages(night, failure_list=FAILURE_LIST, triage=TRIAGE):
     reads = [{"found": failure_list is not None, "data": failure_list}]
     if night["mode"] == "classified":
         reads.append({"found": triage is not None, "data": triage})
-    nodes = {"Settings": {"repo": "o/r"}, "Read artifacts": reads, "Allowed nights": [night]}
+    nodes = {"Settings": {"repo": "o/r"}, "Read artifacts": reads, "Nights to post": [night]}
     return run_code(code_of(W3, "Messages"), {}, nodes)
 
 
@@ -1051,6 +1084,15 @@ def test_w3_fallback_posts_s3_first_then_every_failure():
 
 
 @needs_node
+def test_w3_plain_night_explains_why_and_posts_every_failure():
+    msgs = w3_messages(night_of("fallback", reason="plain", triage_run_id=""))
+    assert msgs[0]["body"] == "Reason: AI triage is used only on laptops, not in GitHub (`plain`)."
+    assert msgs[0]["links"] == []
+    assert len(msgs) == 1 + len(FAILURE_LIST["failures"])
+    assert all(m["header"] == "Not classified" and m["legend"].startswith("React: 🐞 Bug") for m in msgs[1:])
+
+
+@needs_node
 def test_w3_retry_skips_what_was_posted_and_long_lists_shorten_ids():
     first = FAILURE_LIST["failures"][0]["test_id"]
     msgs = w3_messages(night_of("fallback", posted=["s3", f"test:{first}"], reason="capped"))
@@ -1070,15 +1112,32 @@ def test_w3_remembers_what_went_out_and_fails_on_the_rest():
     assert [(o["key"], o["ts"]) for o in out] == [("test:a", "1.2")]
     with pytest.raises(subprocess.CalledProcessError) as failure:
         run_code(code_of(W3, "All posted?"), {}, {"Post": [{"posted": True}, {"posted": False, "error": "not_in_channel"}],
-                                                   "Allowed nights": [{"nightly_run_id": "7"}]})
+                                                   "Nights to post": [{"nightly_run_id": "7"}]})
     assert "1 triage message(s) not posted: not_in_channel" in failure.value.stderr
-    assert run_code(code_of(W3, "All posted?"), {}, {"Allowed nights": [{"nightly_run_id": "7"}]}) == [{"nightly_run_id": "7"}]
+    assert run_code(code_of(W3, "All posted?"), {}, {"Nights to post": [{"nightly_run_id": "7"}]}) == [{"nightly_run_id": "7"}]
 
 
 def test_w3_posting_is_gated():
-    assert W3["connections"]["To the gate"]["main"][0][0]["node"] == "Gate"
+    c = W3["connections"]
+    assert c["Decide"]["main"][0][0]["node"] == "Needs the gate?"
+    assert c["Needs the gate?"]["main"][0][0]["node"] == "To the gate"
+    assert c["To the gate"]["main"][0][0]["node"] == "Gate"
+    assert c["Allowed nights"]["main"][0] == [{"node": "Nights to post", "type": "main", "index": 0}]
+    # Only plain nights (no AI) skip the gate, into the merge's second input.
+    assert c["Needs the gate?"]["main"][1] == [{"node": "Nights to post", "type": "main", "index": 1}]
+    assert c["Nights to post"]["main"][0][0]["node"] == "What to read"
     gate_input = next(n for n in W3["nodes"] if n["name"] == "To the gate")["parameters"]["jsCode"]
     assert "action: 'triage-post'" in gate_input
+
+
+@needs_node
+def test_w3_gate_answers_match_their_nights():
+    asked = [{"night": {"nightly_run_id": "7"}}, {"night": {"nightly_run_id": "8"}}]
+    code = code_of(W3, "Allowed nights").replace("$input.all()", json.dumps([{"json": {"allowed": False}}, {"json": {"allowed": True}}]))
+    assert run_code(code, {}, {"To the gate": asked}) == [{"nightly_run_id": "8"}]
+    code = code_of(W3, "To the gate").replace("$input.all()", json.dumps([{"json": {"nightly_run_id": "7", "mode": "classified"}}]))
+    [g] = run_code(code, {})
+    assert g["night"] == {"nightly_run_id": "7", "mode": "classified"} and g["target"] == "7"
     assert W3["settings"]["errorWorkflow"] == W0["id"]
 
 

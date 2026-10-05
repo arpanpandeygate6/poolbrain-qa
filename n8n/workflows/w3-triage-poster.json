@@ -74,7 +74,7 @@
       ],
       "parameters": {
         "operation": "executeQuery",
-        "query": "-- Triage requests not yet posted, what was already posted for each, why the\n-- gate kept triage back, and when W3 may ask the gate about posting again.\nSELECT coalesce(json_agg(json_build_object(\n         'nightly_run_id', t.nightly_run_id::text, 'state', t.state, 'posted', t.posted,\n         'dispatched_at', to_char(t.dispatched_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\n         'created_at', to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\n         'queue_reason', (SELECT d.reason FROM audit.deferred_requests d WHERE d.action = 'dispatch' AND d.workflow = 'triage'\n                            AND d.target = t.nightly_run_id::text AND d.done_at IS NULL LIMIT 1),\n         'post_wait_until', (SELECT to_char(d.not_before AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM audit.deferred_requests d\n                               WHERE d.action = 'triage-post' AND d.target = t.nightly_run_id::text AND d.done_at IS NULL LIMIT 1)\n       ) ORDER BY t.nightly_run_id), '[]') AS requests\nFROM audit.triage_requests t WHERE t.state IN ('dispatched', 'deferred');",
+        "query": "-- Triage requests not yet posted, what was already posted for each, why the\n-- gate kept triage back, and when W3 may ask the gate about posting again.\n-- `plain` nights (W2's plain mode, no AI) are posted straight away.\nSELECT coalesce(json_agg(json_build_object(\n         'nightly_run_id', t.nightly_run_id::text, 'state', t.state, 'posted', t.posted,\n         'dispatched_at', to_char(t.dispatched_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\n         'created_at', to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),\n         'queue_reason', (SELECT d.reason FROM audit.deferred_requests d WHERE d.action = 'dispatch' AND d.workflow = 'triage'\n                            AND d.target = t.nightly_run_id::text AND d.done_at IS NULL LIMIT 1),\n         'post_wait_until', (SELECT to_char(d.not_before AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM audit.deferred_requests d\n                               WHERE d.action = 'triage-post' AND d.target = t.nightly_run_id::text AND d.done_at IS NULL LIMIT 1)\n       ) ORDER BY t.nightly_run_id), '[]') AS requests\nFROM audit.triage_requests t WHERE t.state IN ('dispatched', 'deferred', 'plain');",
         "options": {}
       },
       "credentials": {
@@ -210,7 +210,41 @@
         100
       ],
       "parameters": {
-        "jsCode": "// Which nights to post now: classified (triage ended ok) or the fallback (it\n// failed, was blocked or capped, or no run finished within 60 minutes of the\n// start, or the gate kept it back for 60 minutes). Others wait.\nconst WAIT_MS = 60 * 60000;\nconst now = Date.now();\nconst open = $('Open requests').first().json;\nconst requests = Array.isArray(open.requests) ? open.requests : JSON.parse(open.requests || '[]');\nconst finished = $('Finished runs').isExecuted ? $('Finished runs').all().map((i) => i.json) : [];\nconst outcomes = $('Read outcome').isExecuted ? $('Read outcome').all().map((i) => i.json) : [];\nconst result = {};\nfinished.forEach((f, i) => { result[f.nightly_run_id] = { triage_run_id: f.triage_run_id, outcome: outcomes[i]?.found ? outcomes[i].data : null }; });\n\nreturn requests.flatMap((r) => {\n  if (r.post_wait_until && Date.parse(r.post_wait_until) > now) return [];  // the gate said \"not now\" to posting\n  const base = { nightly_run_id: r.nightly_run_id, posted: Array.isArray(r.posted) ? r.posted : JSON.parse(r.posted || '[]') };\n  if (r.state === 'dispatched') {\n    const done = result[r.nightly_run_id];\n    if (done) {\n      const o = done.outcome;\n      if (o && o.status === 'ok') return [{ json: { ...base, mode: 'classified', triage_run_id: done.triage_run_id, reason: '' } }];\n      return [{ json: { ...base, mode: 'fallback', triage_run_id: done.triage_run_id,\n        reason: o ? (o.status === 'error' ? (o.reason || 'error') : o.status === 'blocked' ? (o.reason || 'blocked') : o.status) : 'no-run-outcome' } }];\n    }\n    if (now - Date.parse(r.dispatched_at) > WAIT_MS) return [{ json: { ...base, mode: 'fallback', triage_run_id: '', reason: 'no-triage-run' } }];\n    return [];\n  }\n  // deferred: the gate kept triage back (AI work off, or the triage limit)\n  if (now - Date.parse(r.created_at) > WAIT_MS) {\n    return [{ json: { ...base, mode: 'fallback', triage_run_id: '', reason: r.queue_reason === 'capped' ? 'capped' : (r.queue_reason || 'not-started') } }];\n  }\n  return [];\n});\n"
+        "jsCode": "// Which nights to post now: classified (triage ended ok) or the fallback (it\n// failed, was blocked or capped, or no run finished within 60 minutes of the\n// start, or the gate kept it back for 60 minutes). Others wait.\n// A `plain` night (W2's plain mode) gets the fallback at once and skips the\n// gate (gated: false): its messages come from the failure list alone, no AI.\nconst WAIT_MS = 60 * 60000;\nconst now = Date.now();\nconst open = $('Open requests').first().json;\nconst requests = Array.isArray(open.requests) ? open.requests : JSON.parse(open.requests || '[]');\nconst finished = $('Finished runs').isExecuted ? $('Finished runs').all().map((i) => i.json) : [];\nconst outcomes = $('Read outcome').isExecuted ? $('Read outcome').all().map((i) => i.json) : [];\nconst result = {};\nfinished.forEach((f, i) => { result[f.nightly_run_id] = { triage_run_id: f.triage_run_id, outcome: outcomes[i]?.found ? outcomes[i].data : null }; });\n\nreturn requests.flatMap((r) => {\n  const base = { nightly_run_id: r.nightly_run_id, posted: Array.isArray(r.posted) ? r.posted : JSON.parse(r.posted || '[]'), gated: true };\n  if (r.state === 'plain') return [{ json: { ...base, mode: 'fallback', triage_run_id: '', reason: 'plain', gated: false } }];\n  if (r.post_wait_until && Date.parse(r.post_wait_until) > now) return [];  // the gate said \"not now\" to posting\n  if (r.state === 'dispatched') {\n    const done = result[r.nightly_run_id];\n    if (done) {\n      const o = done.outcome;\n      if (o && o.status === 'ok') return [{ json: { ...base, mode: 'classified', triage_run_id: done.triage_run_id, reason: '' } }];\n      return [{ json: { ...base, mode: 'fallback', triage_run_id: done.triage_run_id,\n        reason: o ? (o.status === 'error' ? (o.reason || 'error') : o.status === 'blocked' ? (o.reason || 'blocked') : o.status) : 'no-run-outcome' } }];\n    }\n    if (now - Date.parse(r.dispatched_at) > WAIT_MS) return [{ json: { ...base, mode: 'fallback', triage_run_id: '', reason: 'no-triage-run' } }];\n    return [];\n  }\n  // deferred: the gate kept triage back (AI work off, or the triage limit)\n  if (now - Date.parse(r.created_at) > WAIT_MS) {\n    return [{ json: { ...base, mode: 'fallback', triage_run_id: '', reason: r.queue_reason === 'capped' ? 'capped' : (r.queue_reason || 'not-started') } }];\n  }\n  return [];\n});\n"
+      }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000024",
+      "name": "Needs the gate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        800,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c3b2c3d4-0001-4000-8000-000000002401",
+              "leftValue": "={{ $json.gated }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       }
     },
     {
@@ -219,11 +253,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        800,
-        100
+        1000,
+        0
       ],
       "parameters": {
-        "jsCode": "return $input.all().map((d) => ({ json: { action: 'triage-post', workflow: '', target: d.json.nightly_run_id,\n  payload: { nightly_run_id: d.json.nightly_run_id } } }));\n"
+        "jsCode": "// Only nights with AI results (or their fallback) ask the gate. `night` rides\n// along so \"Allowed nights\" knows which answer belongs to which night.\nreturn $input.all().map((d) => ({ json: { action: 'triage-post', workflow: '', target: d.json.nightly_run_id,\n  payload: { nightly_run_id: d.json.nightly_run_id }, night: d.json } }));\n"
       }
     },
     {
@@ -232,8 +266,8 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1000,
-        100
+        1200,
+        0
       ],
       "parameters": {
         "workflowId": {
@@ -307,12 +341,23 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1200,
-        100
+        1400,
+        0
       ],
       "parameters": {
-        "jsCode": "// Posting is a gated action (AR-11): only the nights the gate allows.\nconst decided = $('Decide').all();\nreturn $input.all().flatMap((answer, i) => (answer.json.allowed === true ? [decided[i]] : []));\n"
+        "jsCode": "// Posting is a gated action (AR-11): only the nights the gate allows.\nconst asked = $('To the gate').all();\nreturn $input.all().flatMap((answer, i) => (answer.json.allowed === true ? [{ json: asked[i].json.night }] : []));\n"
       }
+    },
+    {
+      "id": "c3b2c3d4-0001-4000-8000-000000000025",
+      "name": "Nights to post",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1600,
+        100
+      ],
+      "parameters": {}
     },
     {
       "id": "c3b2c3d4-0001-4000-8000-000000000013",
@@ -320,7 +365,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1400,
+        1800,
         100
       ],
       "parameters": {
@@ -333,7 +378,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1600,
+        2000,
         100
       ],
       "parameters": {
@@ -397,11 +442,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1800,
+        2200,
         100
       ],
       "parameters": {
-        "jsCode": "// S2 (one per failure, classified), or S3 then one unclassified failure\n// message per failure (EXPERIENCE.md M2, M3). All are replies in the S1\n// thread. Anything already posted for a night (a retry) is skipped.\n\n// Words copied from contracts/vocabulary.json (triage_class and reactions);\n// scripts/tests/test_n8n_workflows.py checks the copy.\nconst CLASS = { product_defect: 'Product defect', test_defect: 'Test defect', environment: 'Environment', flaky: 'Flaky', unknown: 'Unknown' };\nconst STATUS = { failed: 'FAILED', quarantined: 'QUARANTINED', 'passed-on-retry': 'PASSED ON RETRY' };\nconst LEGEND = 'React: 🐞 Bug (file in Jira, you are Reporter) · 🔁 Flaky (quarantine PR) · 🌩️ Environment · '\n  + '🙈 Ignore (reply with a reason) · ↩️ Undo within 24 h. Reply appears in about 2 minutes.';\nconst SUGGESTED = {\n  product_defect: 'check the run, then react. Suggested: 🐞 Bug.',\n  flaky: 'check the run, then react. Suggested: 🔁 Flaky.',\n  environment: 'check the run, then react. Suggested: 🌩️ Environment.',\n  test_defect: 'fix the test (the healer in Claude Code on a laptop can help), or react.',\n  unknown: 'look at the run, then react.',\n};\nconst WHY = {\n  capped: \"the agent's daily limit for triage is reached\",\n  disabled: 'AI work is off', 'agent-enabled-off': 'AI work is off',\n  'no-triage-input': \"the masked failure details weren't saved\",\n  'agent-failed': 'the triage run failed', 'agent-not-set-up': \"the agent isn't set up yet\",\n  'invalid-triage': \"the classification didn't pass its checks\",\n  'no-triage-run': 'no triage run finished within 60 minutes',\n  'no-run-outcome': \"the triage run didn't say how it ended\",\n  'not-started': \"triage wasn't started\",\n};\n\nconst repo = `https://github.com/${$('Settings').first().json.repo}`;\nconst reads = $('Read artifacts').all().map((i) => i.json);\nlet next = 0;\nreturn $('Allowed nights').all().flatMap((night) => {\n  const d = night.json;\n  const list = reads[next++];\n  const triage = d.mode === 'classified' ? reads[next++] : null;\n  if (!list?.found) return [];  // no failure-list: nothing to reply under\n  const fl = list.data;\n  const done = new Set(d.posted);\n  const runUrl = `${repo}/actions/runs/${fl.nightly_run_id}`;\n  const links = [{ label: 'Run', url: runUrl }, { label: 'Allure report', url: `${runUrl}#artifacts` }];\n  const shorten = fl.failures.length > 10;\n  const name = (id) => (shorten ? id.split('::').pop().split(' > ').pop() : id);\n  const classes = Object.fromEntries((triage?.found ? triage.data.failures : []).map((f) => [f.test_id, f]));\n  const out = [];\n  const base = { nightly_run_id: d.nightly_run_id, thread_ts: fl.slack_ts, todo_label: '', kind: '' };\n\n  if (d.mode === 'fallback' && !done.has('s3')) {\n    out.push({ ...base, key: 's3', test_id: '', class: '',\n      header: \"Classification didn't run for last night's failures.\",\n      body: `Reason: ${WHY[d.reason] ?? 'triage ended without a result'} (\\`${d.reason}\\`).`,\n      todo: 'work from the list above. A QA member can run triage in Claude Code on a laptop. The gate is unchanged.',\n      links: d.triage_run_id ? [{ label: 'Triage run', url: `${repo}/actions/runs/${d.triage_run_id}` }] : [], legend: '' });\n  }\n  for (const f of fl.failures) {\n    if (done.has(`test:${f.test_id}`)) continue;\n    const c = classes[f.test_id];\n    const where = `\\`${name(f.test_id)}\\` — flow \\`${f.flow_id || 'unknown'}\\``;\n    if (c) {\n      const lines = [where, `Why: ${c.evidence}`];\n      if (c.bug_title) lines.push(`Drafted bug: \"${c.bug_title}\"`);\n      out.push({ ...base, key: `test:${f.test_id}`, test_id: f.test_id, class: c.class, flow_id: f.flow_id || '', bug_title: c.bug_title || '',\n        header: `Class: ${CLASS[c.class]} (suggested)`, body: lines.join('\\n'), todo: SUGGESTED[c.class], links, legend: LEGEND });\n    } else {\n      out.push({ ...base, key: `test:${f.test_id}`, test_id: f.test_id, class: '', flow_id: f.flow_id || '', bug_title: '',\n        header: 'Not classified', body: `${where}\\nStatus: ${STATUS[f.status] ?? f.status}.`,\n        todo: 'look at the run, then react.', links, legend: LEGEND });\n    }\n  }\n  return out.map((m) => ({ json: m }));\n});\n"
+        "jsCode": "// S2 (one per failure, classified), or S3 then one unclassified failure\n// message per failure (EXPERIENCE.md M2, M3). All are replies in the S1\n// thread. Anything already posted for a night (a retry) is skipped.\n\n// Words copied from contracts/vocabulary.json (triage_class and reactions);\n// scripts/tests/test_n8n_workflows.py checks the copy.\nconst CLASS = { product_defect: 'Product defect', test_defect: 'Test defect', environment: 'Environment', flaky: 'Flaky', unknown: 'Unknown' };\nconst STATUS = { failed: 'FAILED', quarantined: 'QUARANTINED', 'passed-on-retry': 'PASSED ON RETRY' };\nconst LEGEND = 'React: 🐞 Bug (file in Jira, you are Reporter) · 🔁 Flaky (quarantine PR) · 🌩️ Environment · '\n  + '🙈 Ignore (reply with a reason) · ↩️ Undo within 24 h. Reply appears in about 2 minutes.';\nconst SUGGESTED = {\n  product_defect: 'check the run, then react. Suggested: 🐞 Bug.',\n  flaky: 'check the run, then react. Suggested: 🔁 Flaky.',\n  environment: 'check the run, then react. Suggested: 🌩️ Environment.',\n  test_defect: 'fix the test (the healer in Claude Code on a laptop can help), or react.',\n  unknown: 'look at the run, then react.',\n};\nconst WHY = {\n  capped: \"the agent's daily limit for triage is reached\",\n  disabled: 'AI work is off', 'agent-enabled-off': 'AI work is off',\n  'no-triage-input': \"the masked failure details weren't saved\",\n  'agent-failed': 'the triage run failed', 'agent-not-set-up': \"the agent isn't set up yet\",\n  'invalid-triage': \"the classification didn't pass its checks\",\n  'no-triage-run': 'no triage run finished within 60 minutes',\n  'no-run-outcome': \"the triage run didn't say how it ended\",\n  'not-started': \"triage wasn't started\",\n  plain: 'AI triage is used only on laptops, not in GitHub',\n};\n\nconst repo = `https://github.com/${$('Settings').first().json.repo}`;\nconst reads = $('Read artifacts').all().map((i) => i.json);\nlet next = 0;\nreturn $('Nights to post').all().flatMap((night) => {\n  const d = night.json;\n  const list = reads[next++];\n  const triage = d.mode === 'classified' ? reads[next++] : null;\n  if (!list?.found) return [];  // no failure-list: nothing to reply under\n  const fl = list.data;\n  const done = new Set(d.posted);\n  const runUrl = `${repo}/actions/runs/${fl.nightly_run_id}`;\n  const links = [{ label: 'Run', url: runUrl }, { label: 'Allure report', url: `${runUrl}#artifacts` }];\n  const shorten = fl.failures.length > 10;\n  const name = (id) => (shorten ? id.split('::').pop().split(' > ').pop() : id);\n  const classes = Object.fromEntries((triage?.found ? triage.data.failures : []).map((f) => [f.test_id, f]));\n  const out = [];\n  const base = { nightly_run_id: d.nightly_run_id, thread_ts: fl.slack_ts, todo_label: '', kind: '' };\n\n  if (d.mode === 'fallback' && !done.has('s3')) {\n    out.push({ ...base, key: 's3', test_id: '', class: '',\n      header: \"Classification didn't run for last night's failures.\",\n      body: `Reason: ${WHY[d.reason] ?? 'triage ended without a result'} (\\`${d.reason}\\`).`,\n      todo: 'work from the list above. A QA member can run triage in Claude Code on a laptop. The gate is unchanged.',\n      links: d.triage_run_id ? [{ label: 'Triage run', url: `${repo}/actions/runs/${d.triage_run_id}` }] : [], legend: '' });\n  }\n  for (const f of fl.failures) {\n    if (done.has(`test:${f.test_id}`)) continue;\n    const c = classes[f.test_id];\n    const where = `\\`${name(f.test_id)}\\` — flow \\`${f.flow_id || 'unknown'}\\``;\n    if (c) {\n      const lines = [where, `Why: ${c.evidence}`];\n      if (c.bug_title) lines.push(`Drafted bug: \"${c.bug_title}\"`);\n      out.push({ ...base, key: `test:${f.test_id}`, test_id: f.test_id, class: c.class, flow_id: f.flow_id || '', bug_title: c.bug_title || '',\n        header: `Class: ${CLASS[c.class]} (suggested)`, body: lines.join('\\n'), todo: SUGGESTED[c.class], links, legend: LEGEND });\n    } else {\n      out.push({ ...base, key: `test:${f.test_id}`, test_id: f.test_id, class: '', flow_id: f.flow_id || '', bug_title: '',\n        header: 'Not classified', body: `${where}\\nStatus: ${STATUS[f.status] ?? f.status}.`,\n        todo: 'look at the run, then react.', links, legend: LEGEND });\n    }\n  }\n  return out.map((m) => ({ json: m }));\n});\n"
       },
       "alwaysOutputData": true
     },
@@ -411,7 +456,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1900,
+        2300,
         100
       ],
       "parameters": {
@@ -445,7 +490,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        2000,
+        2400,
         100
       ],
       "parameters": {
@@ -564,7 +609,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2200,
+        2600,
         0
       ],
       "parameters": {
@@ -577,7 +622,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2400,
+        2800,
         0
       ],
       "parameters": {
@@ -600,11 +645,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2200,
+        2600,
         200
       ],
       "parameters": {
-        "jsCode": "// Any message Slack didn't take fails the run (W0 alerts). What did go out is\n// remembered, so the retry posts only the rest.\nconst failed = ($('Post').isExecuted ? $('Post').all() : []).filter((r) => !r.json.posted && !r.json.preview);\nif (failed.length) throw new Error(`${failed.length} triage message(s) not posted: ${failed[0].json.error}`);\nreturn $('Allowed nights').all();\n"
+        "jsCode": "// Any message Slack didn't take fails the run (W0 alerts). What did go out is\n// remembered, so the retry posts only the rest.\nconst failed = ($('Post').isExecuted ? $('Post').all() : []).filter((r) => !r.json.posted && !r.json.preview);\nif (failed.length) throw new Error(`${failed.length} triage message(s) not posted: ${failed[0].json.error}`);\nreturn $('Nights to post').all();\n"
       }
     },
     {
@@ -613,7 +658,7 @@
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        2400,
+        2800,
         200
       ],
       "parameters": {
@@ -636,11 +681,11 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2600,
+        3000,
         200
       ],
       "parameters": {
-        "jsCode": "return $('Allowed nights').all().map((d) => ({\n  json: {\n    actor: 'n8n:w3-triage-poster',\n    actor_type: 'n8n',\n    action: d.json.mode === 'classified' ? 'triage-posted' : 'triage-fallback-posted',\n    target: `nightly ${d.json.nightly_run_id}${d.json.reason ? ` (${d.json.reason})` : ''}`,\n    link: `https://github.com/${$('Settings').first().json.repo}/actions/runs/${d.json.nightly_run_id}`,\n  },\n}));\n"
+        "jsCode": "return $('Nights to post').all().map((d) => ({\n  json: {\n    actor: 'n8n:w3-triage-poster',\n    actor_type: 'n8n',\n    action: d.json.mode === 'classified' ? 'triage-posted' : 'triage-fallback-posted',\n    target: `nightly ${d.json.nightly_run_id}${d.json.reason ? ` (${d.json.reason})` : ''}`,\n    link: `https://github.com/${$('Settings').first().json.repo}/actions/runs/${d.json.nightly_run_id}`,\n  },\n}));\n"
       },
       "executeOnce": true
     },
@@ -650,7 +695,7 @@
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        2800,
+        3200,
         200
       ],
       "parameters": {
@@ -817,7 +862,7 @@
       "main": [
         [
           {
-            "node": "To the gate",
+            "node": "Needs the gate?",
             "type": "main",
             "index": 0
           }
@@ -850,7 +895,7 @@
       "main": [
         [
           {
-            "node": "What to read",
+            "node": "Nights to post",
             "type": "main",
             "index": 0
           }
@@ -962,6 +1007,35 @@
         [
           {
             "node": "Write audit entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs the gate?": {
+      "main": [
+        [
+          {
+            "node": "To the gate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nights to post",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Nights to post": {
+      "main": [
+        [
+          {
+            "node": "What to read",
             "type": "main",
             "index": 0
           }

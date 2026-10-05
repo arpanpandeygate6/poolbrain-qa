@@ -57,6 +57,12 @@
               "name": "repo",
               "value": "arpanpandeygate6/poolbrain-qa",
               "type": "string"
+            },
+            {
+              "id": "b9b2c3d4-0001-4000-8000-000000000302",
+              "name": "triage_mode",
+              "value": "plain",
+              "type": "string"
             }
           ]
         },
@@ -193,7 +199,7 @@
         100
       ],
       "parameters": {
-        "jsCode": "// The waiting list first (oldest first), then newly failed nights.\nconst list = (v) => (Array.isArray(v) ? v : JSON.parse(v || '[]'));\nconst due = list($('Due queue').first().json.due).map((d) => ({ id: String(d.nightly_run_id), queue_id: d.queue_id }));\nconst fresh = $('With failure-list').isExecuted ? $('With failure-list').all().map((i) => ({ id: i.json.nightly_run_id, queue_id: 0 })) : [];\nreturn [...due, ...fresh]\n  .filter((r) => /^[1-9][0-9]*$/.test(r.id))\n  .map((r) => ({ json: { action: 'dispatch', workflow: 'triage', target: r.id, payload: { nightly_run_id: r.id }, queue_id: r.queue_id } }));\n"
+        "jsCode": "// The waiting list first (oldest first), then newly failed nights.\n// triage_mode (Settings): only the exact value `agent` starts AI triage in\n// GitHub. Anything else is `plain`: new nights are recorded for W3's plain\n// \"Not classified\" messages and never go to the gate (no AI is used).\nconst list = (v) => (Array.isArray(v) ? v : JSON.parse(v || '[]'));\nconst plain = $('Settings').first().json?.triage_mode !== 'agent';\nconst due = plain ? [] : list($('Due queue').first().json.due).map((d) => ({ id: String(d.nightly_run_id), queue_id: d.queue_id }));\nconst fresh = $('With failure-list').isExecuted ? $('With failure-list').all().map((i) => ({ id: i.json.nightly_run_id, queue_id: 0 })) : [];\nreturn [...due, ...fresh]\n  .filter((r) => /^[1-9][0-9]*$/.test(r.id))\n  .map((r) => ({ json: { action: 'dispatch', workflow: 'triage', target: r.id, payload: { nightly_run_id: r.id }, queue_id: r.queue_id, plain } }));\n"
       },
       "alwaysOutputData": true
     },
@@ -526,6 +532,63 @@
           "waitForSubWorkflow": true
         }
       }
+    },
+    {
+      "id": "b9b2c3d4-0001-4000-8000-000000000020",
+      "name": "Plain?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1300,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b9b2c3d4-0001-4000-8000-000000002001",
+              "leftValue": "={{ $json.plain }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "b9b2c3d4-0001-4000-8000-000000000021",
+      "name": "Record plain",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1500,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Plain mode: no AI triage. W3 posts one \"Not classified\" message per failure\n-- in the failure list's thread. At most one request per nightly run.\nINSERT INTO audit.triage_requests (nightly_run_id, state, reason)\nVALUES ($1::bigint, 'plain', 'plain')\nON CONFLICT (nightly_run_id) DO NOTHING\nRETURNING nightly_run_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.target] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "auditPostgres001",
+          "name": "Audit log (Postgres)"
+        }
+      }
     }
   ],
   "connections": {
@@ -637,7 +700,7 @@
       "main": [
         [
           {
-            "node": "Gate",
+            "node": "Plain?",
             "type": "main",
             "index": 0
           }
@@ -712,6 +775,24 @@
         [
           {
             "node": "Write audit entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plain?": {
+      "main": [
+        [
+          {
+            "node": "Record plain",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gate",
             "type": "main",
             "index": 0
           }
