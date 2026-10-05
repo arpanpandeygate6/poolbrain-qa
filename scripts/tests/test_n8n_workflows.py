@@ -408,11 +408,12 @@ def night(run_id, status="passed", passed=100, failed=0, retried=0, quarantined=
             "failures": list(failures), "quarantine": list(quarantine)}
 
 
-def daily_update(summaries, newest_hours_ago=7, switch="true", newest_id=None):
+def daily_update(summaries, newest_hours_ago=7, switch="true", newest_id=None, decisions=()):
     started = datetime.now(UTC).timestamp() - newest_hours_ago * 3600
     newest = {"id": newest_id or (summaries[0]["nightly_run_id"] if summaries else 1),
               "run_started_at": datetime.fromtimestamp(started, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    nodes = {"Nightly runs": {"workflow_runs": [newest]}, "Read AGENT_ENABLED": {"value": switch} if switch else {"error": {}}}
+    nodes = {"Nightly runs": {"workflow_runs": [newest]}, "Read AGENT_ENABLED": {"value": switch} if switch else {"error": {}},
+             "Decisions": {"decisions": list(decisions)} if decisions is not None else {"error": "connection refused"}}
     if summaries:
         nodes["Read summary"] = [{"data": s} for s in summaries]
     return run_code(code_of(W4, "Build update"), {}, nodes)[0]
@@ -422,6 +423,20 @@ def test_w4_status_words_match_vocabulary():
     code = code_of(W4, "Build update")
     for key, word in VOCABULARY["test_status"].items():
         assert f"'{word}'" in code, key
+    for key, word in VOCABULARY["triage_class"].items():
+        assert f"{key}: '{word}'" in code, key
+    for key in ("bug", "flaky", "environment", "ignore"):
+        reaction = VOCABULARY["reactions"][key]
+        assert f"{key}: '{reaction['emoji']} {reaction['label']}'" in code, key
+
+
+def test_w4_reads_live_decisions_before_building_the_update():
+    c = W4["connections"]
+    assert c["Read AGENT_ENABLED"]["main"][0][0]["node"] == "Decisions"
+    assert c["Decisions"]["main"][0][0]["node"] == "Build update"
+    decisions = next(n for n in W4["nodes"] if n["name"] == "Decisions")
+    assert "d.undone_at IS NULL" in decisions["parameters"]["query"] and "m.kind = 'failure'" in decisions["parameters"]["query"]
+    assert decisions["onError"] == "continueRegularOutput" and decisions["alwaysOutputData"] is True
 
 
 def test_w4_runs_at_0930_ist_and_reports_errors_to_w0():
@@ -450,6 +465,56 @@ def test_w4_failed_night():
     assert lines[-1] == "Datadog: not available."
     assert [link["label"] for link in out["links"]] == ["Nightly run", "Allure report"]
     assert out["ai_off"] is False
+
+
+def decided(test_id, action=None, state="handled", cls="", name="asha", jira_key="", reason="", night=9):
+    return {"nightly_run_id": str(night), "test_id": test_id, "class": cls, "action": action, "state": state if action else None,
+            "actor_id": "U1", "actor_name": name, "reason": reason, "jira_key": jira_key}
+
+
+@needs_node
+def test_w4_failures_show_class_and_decision():
+    ids = [f"api:tests/t.py::test_{n}" for n in ("bug", "env", "flaky", "waiting", "open", "no_message", "nameless")]
+    failures = [{"test_id": t, "flow_id": "x", "status": "failed"} for t in ids]
+    decisions = [
+        decided(ids[0], "bug", cls="product_defect", jira_key="PM-5678"),
+        decided(ids[1], "environment", cls="environment", name="ravi"),
+        decided(ids[2], "flaky", cls="flaky", jira_key="PM-5679"),
+        decided(ids[3], "ignore", state="waiting-for-reason"),
+        decided(ids[4]),  # posted, nobody reacted yet; plain mode has no class
+        decided(ids[6], "environment", name=""),
+        decided(ids[5], "bug", jira_key="PM-1", night=8),  # another night: not shown
+    ]
+    lines = daily_update([night(9, "failed", failed=7, failures=failures)], decisions=decisions)["body"].split("\n")
+    assert "• `test_bug` — FAILED — Product defect — 🐞 Bug PM-5678 by @asha" in lines
+    assert "• `test_env` — FAILED — Environment — 🌩️ Environment by @ravi" in lines
+    assert "• `test_flaky` — FAILED — Flaky — 🔁 Flaky PM-5679 by @asha" in lines
+    assert "• `test_waiting` — FAILED — Not classified — 🙈 Ignore by @asha, waiting for a reason" in lines
+    assert "• `test_open` — FAILED — Not classified — no decision yet" in lines
+    assert "• `test_no_message` — FAILED — no decision yet" in lines
+    assert "• `test_nameless` — FAILED — Not classified — 🌩️ Environment by <@U1>" in lines
+
+
+@needs_node
+def test_w4_ignored_failures_have_their_own_section():
+    failures = [{"test_id": "api:tests/t.py::test_pdf", "flow_id": "x", "status": "failed"}]
+    reason = "Test data\nreset late. " + "x" * 300
+    out = daily_update([night(9, "failed", failed=1, failures=failures)],
+                       decisions=[decided("api:tests/t.py::test_pdf", "ignore", reason=reason)])
+    lines = out["body"].split("\n")
+    assert "*Failures and decisions*" not in lines and "No failures last night." not in lines
+    i = lines.index("*Ignored (with reasons)*")
+    assert lines[i + 1].startswith('• `test_pdf` — 🙈 Ignore by @asha: "Test data reset late. xxx')
+    assert lines[i + 1].endswith('…"') and len(lines[i + 1]) < 260
+
+
+@needs_node
+def test_w4_says_when_decisions_could_not_be_read():
+    failures = [{"test_id": "api:tests/t.py::test_a", "flow_id": "x", "status": "failed"}]
+    out = daily_update([night(9, "failed", failed=1, failures=failures)], decisions=None)
+    assert "• `test_a` — FAILED — no decision yet" in out["body"]
+    assert "Decisions: not available (the audit database didn't answer)." in out["body"]
+    assert "Decisions: not available" not in daily_update([night(9)], decisions=None)["body"]
 
 
 @needs_node

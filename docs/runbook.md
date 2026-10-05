@@ -474,18 +474,28 @@ Turns a quarantine request into a PR that adds one entry to `flows/quarantine.ya
 
 **n8n side.** "W4 Daily QA update" (`n8n/workflows/w4-daily-update.json`) runs every day at 04:00 UTC (09:30 IST):
 1. reads the last 14 **scheduled** nightly runs (runs started by a merge or by hand don't count as "last night") and downloads each one's `nightly-summary`;
-2. builds the update: the header "Daily QA update — <date>, 09:30 IST"; "Nightly UAT: **PASSED**/**FAILED** — N passed, N failed, N passed on retry."; "Coverage: N of M regression flows automated (P%)."; "Flaky rate (last 14 nights): P%." (fewer nights are named; above 2% it adds "Above the 2% target. Review flaky tests and react 🔁 Flaky to quarantine them."); the failures, or "No failures last night."; the quarantined tests with owner, Jira key and deadline; lists cut at 10 with "and N more — see the run"; and the links Nightly run · Allure report;
+2. builds the update: the header "Daily QA update — <date>, 09:30 IST"; "Nightly UAT: **PASSED**/**FAILED** — N passed, N failed, N passed on retry."; "Coverage: N of M regression flows automated (P%)."; "Flaky rate (last 14 nights): P%." (fewer nights are named; above 2% it adds "Above the 2% target. Review flaky tests and react 🔁 Flaky to quarantine them."); the failures with their class and decision (see "Decisions" below), or "No failures last night."; "Ignored (with reasons)"; the quarantined tests with owner, Jira key and deadline; lists cut at 10 with "and N more — see the run"; and the links Nightly run · Allure report;
 3. always posts, even without a result: "Nightly run: no result found for last night." when the newest scheduled run is older than 36 hours or saved no summary;
 4. adds "AI work is off (`AGENT_ENABLED` is not `true`): failures are not classified." when the switch is off (W4 itself is never stopped by it);
 5. writes an audit entry (`n8n:w4-daily-update`, `daily-update-posted` or `daily-update-preview`, with `-ai-off` when the switch is off). If Slack doesn't take the update, the run fails and W0 alerts.
 
 The flaky rate is the tests that failed and then passed on retry, divided by all tests that ran (passed, failed, passed on retry, quarantined), over the nights that have a summary.
 
+**Decisions (5 Oct 2026).** Before building the update, W4 reads the failure messages of the last 3 days from `audit.message_map`, each with its live decision from `audit.reaction_decisions` (undone ones don't count), and keeps last night's. Each failure line is "`test` — status — class — decision":
+- the class is the one W3 posted, or "Not classified" (plain mode). A failure with no Slack message (Slack off, or not posted yet) shows no class;
+- the decision is the reaction as emoji and word, the Jira key for 🐞 and 🔁, and the person, for example "🐞 Bug PM-5678 by @asha" or "🌩️ Environment by @ravi". It is "no decision yet" when nobody has reacted, and "🙈 Ignore by @asha, waiting for a reason" until the reason reply arrives;
+- names are plain text (the Slack display name), so the update doesn't notify people every morning;
+- failures ignored with a reason move to "Ignored (with reasons)": '`test` — 🙈 Ignore by @asha: "reason"', with the reason on one line and cut at 200 characters;
+- if the audit database doesn't answer, the update still posts, with "no decision yet" and the line "Decisions: not available (the audit database didn't answer)."
+
+While AI work is off, 🐞 and 🔁 wait for the gate (see "W3b Reactions"), so they show as "no decision yet" until Jira takes them.
+
 **Not there yet:**
-- Triage classes and people's decisions (🐞, 🌩️, 🙈 with reasons) come with Epic 6; until then each failure says "no decision yet" and there is no "Ignored" section.
 - Datadog: there is no Datadog connection, so the line always says "Datadog: not available."
 
 **Laptop host.** W4 posts only if the Mac is awake with n8n running at 09:30 IST. If it isn't, that day's update is skipped (the next day's covers its own night).
+
+**Checked on 5 Oct 2026 (decisions):** unit tests cover every kind of decision line, decisions of other nights left out, the Ignored section with a long reason, and the database not answering. The query ran in Postgres as W4's own user (`audit_writer`); with sample rows inside a transaction that was rolled back, an ignored failure came back with its person and reason, and an undone decision came back as no decision. The new W4 is installed and published; the next 09:30 IST update is the first to use it.
 
 **Checked on 4 Oct 2026:** the message rules are covered by unit tests (failed and passed nights, flaky rate above and below 2%, cutting long lists, no result, AI off). A live run in n8n read GitHub, found no scheduled nightly yet (the 02:30 IST schedule had not run from `main` yet), and correctly previewed "Nightly run: no result found for last night." with the AI-off line, and wrote its audit entry. The first update with real numbers is the morning after the first scheduled nightly that has this story's `nightly-summary` step.
 
