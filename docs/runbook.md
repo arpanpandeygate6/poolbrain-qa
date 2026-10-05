@@ -286,9 +286,13 @@ steps:
   - It reads earlier runs' outcomes from their `run-outcome` artifacts, downloading without sending the GitHub token to the artifact storage.
 - **Last step** (`scripts/agent_gate.py finish`, `if: always()`): writes `run-outcome.json` following `contracts/run-outcome.schema.json` (status `ok`, `blocked`, `capped`, `disabled` or `error`, a reason, an optional PR link and the UTC time), checks it, and uploads it as the artifact `run-outcome` for 30 days. When the first step already ended the run, its outcome is kept.
 
+### Decision: AI only from laptops
+
+**Decision (5 Oct 2026, the developer):** QA members use the AI only from Claude Code on their laptops (`/draft-cases`, `/generate-api-tests`, the healer). No Claude token goes into GitHub, so the setup below is **not done for now**: `AGENT_ENABLED` and `AGENT_CAPS` are not created, and the `draft-cases`, `generate-tests` and `triage` workflows stay unused. This avoids the open question of using the Claude Max subscription in unattended runs (A7). Because of it, W2 runs in plain mode (see "Triage in n8n"), and gated n8n actions such as Jira writes from reactions wait while `AGENT_ENABLED` is not `true`.
+
 ### Setup still to do (people, not code)
 
-Nothing below exists yet. The code above is ready for it.
+Nothing below exists yet. The code above is ready for it. It is on hold while "Decision: AI only from laptops" stands.
 
 1. **Repository variables** (QA lead), under **Settings → Secrets and variables → Actions → Variables**: `AGENT_ENABLED` = `true` and `AGENT_CAPS` = `{"draft-cases": 20, "generate-tests": 20, "triage": 2, "quarantine": 5}`. Only people change them. Until they exist, every agent run ends as `disabled` and n8n's gate counts AI work as off.
 2. **GitHub App `qa-agent`** (the agent's own identity, like `qa-relay`): create it under the repository owner's **Settings → Developer settings → GitHub Apps**. Webhooks off. Repository permissions: **Contents: read and write** and **Pull requests: read and write** only, with **no Actions permission**. Install it only on this repository. Keep its app ID and a private key for step 4.
@@ -565,6 +569,8 @@ W1's first run then starts from that moment. **Decision (Story 5.7):** the Ready
 
 At most one triage per nightly run. W2 is installed but **switched off**, with W1 (see "Switching W1 on", which now switches W2 on too).
 
+**Plain mode (the default, 5 Oct 2026).** AI is used only from laptops, never in GitHub (see "Decision: AI only from laptops"), so W2's Settings node has `triage_mode` = `plain`. Only the exact value `agent` starts AI triage as described above. In plain mode, step 3 changes: W2 records each new failed night as `plain` in `audit.triage_requests`, never asks the gate and never starts `triage`. W3 then posts the plain messages (below). The waiting list is left alone.
+
 **"GitHub: read artifact"** (`n8n/workflows/github-read-artifact.json`) is a shared sub-workflow. Given a repository, run ID and artifact name, it returns `{found, data}` with the JSON file inside, using the same two-step download as before (GitHub's storage rejects GitHub's login). W3 uses it.
 
 **Checked on 4 Oct 2026:** the shared step read the real `nightly-summary` of the latest nightly run (status `passed`), and gave `found: false` for a name that doesn't exist. W2 ran against the real runs: no failed nightly in the last 36 hours, so it did nothing.
@@ -574,10 +580,11 @@ At most one triage per nightly run. W2 is installed but **switched off**, with W
 "W3 Triage poster" (`n8n/workflows/w3-triage-poster.json`) runs every 5 minutes. For each night W2 started (or the gate kept back), it finds the triage run by its title (`triage <nightly run ID>`) and decides:
 - **Classified**, when triage ended `ok`: one reply per failure in the failure list's Slack thread (S2): "Class: <class> (suggested)", the test and its flow, "Why:" with the evidence, "Drafted bug:" for product defects, the suggested reaction ("check the run, then react. Suggested: 🐞 Bug."), the links Run · Allure report, and the legend "React: 🐞 Bug (file in Jira, you are Reporter) · 🔁 Flaky (quarantine PR) · 🌩️ Environment · 🙈 Ignore (reply with a reason) · ↩️ Undo within 24 h. Reply appears in about 2 minutes." A failure triage left out gets an unclassified message.
 - **Fallback**, when triage failed, was blocked or capped, didn't say how it ended, didn't finish within 60 minutes of the start, or the gate kept it back for 60 minutes. First S3 in the thread: "Classification didn't run for last night's failures.", the reason, "work from the list above. A QA member can run triage in Claude Code on a laptop. The gate is unchanged." and the triage run link. Then one unclassified message per failure with the same legend, so reactions still work.
+- **Plain**, for a `plain` night (W2's plain mode): the fallback at once, **without the gate**, because no AI is involved. The messages come only from the failure list. S3 gives the reason "AI triage is used only on laptops, not in GitHub (`plain`)", then one "Not classified" message per failure with the reaction legend. The night ends as `fallback` with reason `plain`.
 - Otherwise it waits.
 
 **Rules:**
-- Posting is a gated action. While AI work is off, the gate holds it back and W3 asks again after 15 minutes.
+- Posting AI results (or their fallback) is a gated action. While AI work is off, the gate holds it back and W3 asks again after 15 minutes. Plain nights skip the gate: W3 splits the nights at "Needs the gate?" and joins them again at "Nights to post".
 - More than 10 failures still give one message each; the test ID is shortened to its last part.
 - W3 never edits the failure list itself.
 - Each message is remembered as soon as it goes out (`posted` on the night), so if Slack fails halfway, the run fails (W0 alerts) and the retry posts only the rest.
@@ -589,6 +596,23 @@ At most one triage per nightly run. W2 is installed but **switched off**, with W
 **Needs Slack to be real:** replies go in the failure list's thread, which exists only once Slack is set up. Until then, everything is a preview.
 
 **Checked on 4 Oct 2026:** unit tests cover every decision and both message kinds, retries that skip what was already posted, and shortened IDs. Live: a made-up open request for the real latest nightly run, "started" 61 minutes earlier, was put on the fallback. The real gate refused posting (AI off) and held it back for 15 minutes, so nothing was posted. The test data was removed.
+
+### Switching on the failure messages (plain mode, no AI)
+
+With plain mode, each failure of a failed nightly gets its own "Not classified" message in the failure list's Slack thread, so people can react to it. This needs Slack on in GitHub (the nightly saves a `failure-list` only then). To switch it on, publish W2, W3 and W3b (not W1, W1 follow-up or W6):
+
+```bash
+cd n8n
+./audit-setup.sh   # once, adds the `plain` state to audit.triage_requests
+docker compose run --rm --no-deps -T n8n publish:workflow --id=w2NightlyWatch01
+docker compose run --rm --no-deps -T n8n publish:workflow --id=w3TriagePoster01
+docker compose run --rm --no-deps -T n8n publish:workflow --id=w3bReactions0001
+docker compose restart n8n
+```
+
+**What reactions do while AI work is off:** 🌩️ Environment and 🙈 Ignore work fully. 🐞 Bug, 🔁 Flaky and ✅ Approve write to Jira, which is a gated action, so they wait (and are asked about again every 15 minutes) until `AGENT_ENABLED` is `true`.
+
+**Checked on 5 Oct 2026:** unit tests cover plain mode in W2 (the default, and the waiting list is skipped) and W3 (fallback at once, the gate skipped, the reason line, answers matched to nights). The merge step was tried in n8n 2.41.5 with throwaway workflows: it ran once with plain nights only, gated nights only, and both. Live: W2 found no failed nightly in the last 36 hours, so it did nothing. A made-up `plain` request for a passed nightly (37292202078) went through W3 without the gate, found no `failure-list`, posted nothing and was saved as `fallback` (`plain`). The test row was removed. Its audit entry (`triage-fallback-posted`, "nightly 37292202078 (plain)") remains, because the audit log is append-only.
 
 ## W6 Questions poster (Story 6.7, part 1)
 
