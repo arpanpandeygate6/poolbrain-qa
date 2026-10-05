@@ -149,9 +149,9 @@ jobs:
           exit 1
 
   # Story 2.4: the plain failure list for Slack, built by a separate job that holds
-  # no test credentials. Slack is not set up yet: the job shows the message as a
-  # preview in its summary. When the Slack app and `notify` Environment exist, add
-  # `environment: notify` and pass SLACK_BOT_TOKEN from it (see docs/runbook.md).
+  # no test credentials. It posts with SLACK_BOT_TOKEN and SLACK_CHANNEL (without
+  # them it shows the message as a preview in its summary). On a plan with
+  # Environments, add `environment: notify` here (see docs/runbook.md, "Failure list").
   report:
     name: Failure list
     needs: tests
@@ -199,6 +199,9 @@ jobs:
         env:
           TRIAGE_LIVE: ${{ vars.TRIAGE_LIVE }}
           SLACK_CHANNEL: ${{ vars.SLACK_CHANNEL }}
+          # A repository secret on GitHub Free (decision recorded in docs/runbook.md,
+          # "Failure list"); in the `notify` Environment on a plan with Environments.
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = schedule ]; then when="$(TZ=Asia/Kolkata date '+%d %b') 02:30 IST"; else when="$(TZ=Asia/Kolkata date '+%d %b %H:%M IST')"; fi
           python scripts/failure_list.py \

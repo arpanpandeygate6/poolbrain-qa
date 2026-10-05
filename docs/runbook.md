@@ -791,12 +791,11 @@ After the tests, the nightly's separate **Failure list** job builds the plain li
 - **Words:** every status word, reaction, triage class, run outcome, notice kind and label comes from `contracts/vocabulary.json`, never from code (UX-DR1).
 - **Saved file:** after a successful post, the list is checked against `contracts/failure-list.schema.json` and saved as the artifact `failure-list` (30 days), with the message's `slack_channel` and `slack_ts`. If the check fails, the job fails and nothing is saved. If the Slack post fails, the job fails with the reason and nothing is saved. Either way the test result is unchanged.
 
-**Slack not set up yet.** Until it is, the job shows the message it would post as a preview in its summary, and saves no `failure-list`, because the file needs the Slack message's ID. To turn posting on:
+**Slack is on (5 Oct 2026).** The "Build the failure list" step gets the repository variable `SLACK_CHANNEL` and the secret `SLACK_BOT_TOKEN`. Without them it shows the message as a preview in its summary and saves no `failure-list`, because the file needs the Slack message's ID.
 
-1. Finish the Slack app (Story 5.2) and invite it to the QA channel.
-2. Set the repository variable `SLACK_CHANNEL`, for example `#qa-automation`.
-3. Put the bot token where only `main` can use it: in the `notify` Environment on a plan with Environments. On GitHub Free, the team decides; it must never be a repository secret without that decision being recorded here.
-4. Add `environment: notify` and `SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}` to the "Build the failure list" step's job.
+**Decision (5 Oct 2026, the developer):** on GitHub Free, `SLACK_BOT_TOKEN` is a **repository secret**. It belongs to the QA Bot in the developer's private **test** Slack workspace (`poolbrain-qa-test`, channel `#qa-bot-test`, `C0C6P6Z4JAJ`). Any workflow on any branch could read it, which is acceptable for a test workspace with no one else in it. **Before switching to the company Slack (Gate6)**, the team decides again: on a plan with Environments, move it to a `notify` Environment restricted to `main` and add `environment: notify` to the report job.
+
+**Slack setup (5 Oct 2026):** the Gate6 Slack doesn't let members install apps (an admin must approve), so a private test workspace with only the developer in it is used for now. n8n has the same bot token (`n8n/slack-setup.sh`), `SLACK_CHANNEL` and `SLACK_QA_MEMBERS` (the developer's member ID) in `n8n/.env`. The first real post was the daily update on 5 Oct 2026 at 14:53 IST. **For the real team:** create the app from `n8n/slack-app-manifest.yaml` in Gate6 and click "Request to install"; once approved, re-run `n8n/slack-setup.sh` with the Gate6 channel, member IDs and token, and replace the GitHub variable and secret.
 
 ## Sanitizer and triage-input (Story 6.1)
 
