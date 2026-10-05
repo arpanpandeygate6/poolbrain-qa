@@ -288,7 +288,17 @@ steps:
 
 ### Decision: AI only from laptops
 
-**Decision (5 Oct 2026, the developer):** QA members use the AI only from Claude Code on their laptops (`/draft-cases`, `/generate-api-tests`, the healer). No Claude token goes into GitHub, so the setup below is **not done for now**: `AGENT_ENABLED` and `AGENT_CAPS` are not created, and the `draft-cases`, `generate-tests` and `triage` workflows stay unused. This avoids the open question of using the Claude Max subscription in unattended runs (A7). Because of it, W2 runs in plain mode (see "Triage in n8n"), and gated n8n actions such as Jira writes from reactions wait while `AGENT_ENABLED` is not `true`.
+**Decision (5 Oct 2026, the developer):** QA members use the AI only from Claude Code on their laptops (`/draft-cases`, `/generate-api-tests`, the healer). No Claude token goes into GitHub, so the setup below is **not done for now**: `AGENT_ENABLED` and `AGENT_CAPS` are not created, and the `draft-cases`, `generate-tests` and `triage` workflows stay unused. This avoids the open question of using the Claude Max subscription in unattended runs (A7). Because of it, W2 runs in plain mode (see "Triage in n8n"), and the Jira writes from people's reactions have their own switch (see "Decision: people's reactions write to Jira without the AI switch").
+
+### Decision: people's reactions write to Jira without the AI switch
+
+**Decision (5 Oct 2026, the developer):** 🐞 Bug, 🔁 Flaky, ✅ Approve and their ↩️ undos are people's decisions, not AI work, so they no longer ask the AI gate. They have their own switch, the repository variable **`JIRA_WRITES_ENABLED`** (**Settings → Secrets and variables → Actions → Variables**). Only the exact value `true` lets W3b write to Jira. A missing variable, any other value, or a failed read counts as off: nothing is written, the reaction stays unhandled, and W3b looks at it again on its next run (every 2 minutes, while the message is less than 7 days old). The switch is read once per W3b run, so setting it to `false` stops Jira writes within about 2 minutes. **Not created yet:** create it with `true` when the team is ready for reactions to write to the live PM project.
+
+Still behind the AI gate: starting the `quarantine` workflow after 🔁 (it also needs `AGENT_ENABLED` and the `qa-agent` app, which are on hold). So 🔁 creates the owner's Jira Task, but the quarantine PR waits; a QA member can add the entry to `flows/quarantine.yaml` in a PR by hand.
+
+The gate's "AI work is off" alert no longer says Jira writes stop: it reads "The agent will not draft, generate, triage or quarantine." and lists "people's Jira reactions (while `JIRA_WRITES_ENABLED` is `true`)" as still running. This changes the M12 wording in EXPERIENCE.md, on purpose.
+
+**Checked on 5 Oct 2026:** unit tests cover the switch (`true` on; `false`, `TRUE` or a failed read off) for both reactions and undos, and that only the quarantine start still asks the AI gate. Live: a manual W3b run read `JIRA_WRITES_ENABLED`, got "not found" (the variable doesn't exist yet), counted it as off, and finished normally with its lock released. No Jira write was tried. The updated gate is published, and `n8n/slack-setup.sh` was run again so the installed W3b keeps its Slack settings.
 
 ### Setup still to do (people, not code)
 
@@ -449,7 +459,7 @@ Turns a quarantine request into a PR that adds one entry to `flows/quarantine.ya
 
 **Stopping a run already in progress:** open it on the Actions tab and click **Cancel workflow**.
 
-**How n8n obeys them.** Before any AI action (starting an agent workflow, posting triage, asking for a quarantine, writing to Jira), an n8n workflow calls the shared sub-workflow **"Gate: check"** (`n8n/workflows/gate-check.json`) with `action` (`dispatch`, `triage-post`, `quarantine` or `jira-write`), `workflow` (for `dispatch`: the agent workflow, for example `draft-cases`), `target` (usually the ticket key) and `payload` (what is needed to do it later). It answers `allowed: true`, or `allowed: false` with the `reason` and the waiting-list entry. The caller acts only on `allowed: true`. W0, W5, audit writes and the audit export never call it.
+**How n8n obeys them.** Before any AI action (starting an agent workflow, posting triage, asking for a quarantine), an n8n workflow calls the shared sub-workflow **"Gate: check"** (`n8n/workflows/gate-check.json`) with `action` (`dispatch`, `triage-post`, `quarantine` or `jira-write`; since 5 Oct 2026 nothing uses `jira-write`, see "Decision: people's reactions write to Jira without the AI switch"), `workflow` (for `dispatch`: the agent workflow, for example `draft-cases`), `target` (usually the ticket key) and `payload` (what is needed to do it later). It answers `allowed: true`, or `allowed: false` with the `reason` and the waiting-list entry. The caller acts only on `allowed: true`. W0, W5, audit writes and the audit export never call it.
 
 - **Off:** the request goes on the waiting list, and is asked about again after 15 minutes (so the audit log isn't filled with a refusal every 5 minutes while AI work stays off). The first skipped action after the switch goes off posts "Alert: AI work is off" (what stops, what still runs, how to turn it back on). The first action after it is back on posts "FYI: AI work is on again". Each goes out once per change, and the switch is read on every check, so everything stops within one polling cycle.
 - **Daily limit** (for `dispatch` only): it counts that workflow's runs created since 00:00 IST, leaving out runs whose `run-outcome` is `capped`, `disabled` or `blocked`. It reads that outcome from each run's `run-outcome` artifact. If the limit is reached, the request waits until after 00:00 IST, and "FYI: <work> waits until tomorrow" is posted once per workflow per day. The counting rule is shared with the agent side and tested against `contracts/cap-count.fixture.json`.
@@ -488,7 +498,7 @@ The flaky rate is the tests that failed and then passed on retry, divided by all
 - failures ignored with a reason move to "Ignored (with reasons)": '`test` — 🙈 Ignore by @asha: "reason"', with the reason on one line and cut at 200 characters;
 - if the audit database doesn't answer, the update still posts, with "no decision yet" and the line "Decisions: not available (the audit database didn't answer)."
 
-While AI work is off, 🐞 and 🔁 wait for the gate (see "W3b Reactions"), so they show as "no decision yet" until Jira takes them.
+While `JIRA_WRITES_ENABLED` is not `true`, 🐞 and 🔁 wait (see "W3b Reactions"), so they show as "no decision yet" until Jira takes them.
 
 **Not there yet:**
 - Datadog: there is no Datadog connection, so the line always says "Datadog: not available."
@@ -620,7 +630,7 @@ docker compose run --rm --no-deps -T n8n publish:workflow --id=w3bReactions0001
 docker compose restart n8n
 ```
 
-**What reactions do while AI work is off:** 🌩️ Environment and 🙈 Ignore work fully. 🐞 Bug, 🔁 Flaky and ✅ Approve write to Jira, which is a gated action, so they wait (and are asked about again every 15 minutes) until `AGENT_ENABLED` is `true`.
+**What reactions do:** 🌩️ Environment and 🙈 Ignore work fully. 🐞 Bug, 🔁 Flaky and ✅ Approve write to Jira only while `JIRA_WRITES_ENABLED` is `true`; until then they wait. After 🔁, the quarantine PR still waits for the AI gate.
 
 **Checked on 5 Oct 2026:** unit tests cover plain mode in W2 (the default, and the waiting list is skipped) and W3 (fallback at once, the gate skipped, the reason line, answers matched to nights). The merge step was tried in n8n 2.41.5 with throwaway workflows: it ran once with plain nights only, gated nights only, and both. Live: W2 found no failed nightly in the last 36 hours, so it did nothing. A made-up `plain` request for a passed nightly (37292202078) went through W3 without the gate, found no `failure-list`, posted nothing and was saved as `fallback` (`plain`). The test row was removed. Its audit entry (`triage-fallback-posted`, "nightly 37292202078 (plain)") remains, because the audit log is append-only.
 
@@ -669,7 +679,7 @@ W3b needs the Slack app's `reactions:read`, `channels:history` (`groups:history`
 
 ### W3b part 2: 🐞 Bug and ✅ Approve (Stories 6.4 and 6.7)
 
-Both are **Jira writes**, so they go through the gate (`jira-write`). While AI work is off nothing is written, the reaction stays unhandled, and it is asked about again after 15 minutes. 🌩️ and 🙈 run first, so a Jira problem can't hold them up.
+Both are **Jira writes**, so they run only while `JIRA_WRITES_ENABLED` is `true` (W3b reads it once per run, right after taking its lock). Otherwise nothing is written, the reaction stays unhandled, and it is looked at again on the next run. Before 5 Oct 2026 this was the AI gate (`jira-write`); a reaction the gate had already held back still waits out that hold. 🌩️ and 🙈 run first, so a Jira problem can't hold them up.
 
 **🐞 Bug** calls the sub-workflow "Reaction: file bug" (`n8n/workflows/reaction-file-bug.json`). It:
 1. finds the member's Jira account: first in its **`account_map`** setting, then by email search;
@@ -701,7 +711,7 @@ with "↩️ within 24 h to undo", and an audit entry with the member's email.
 
 ### W3b part 3: 🔁 Flaky (Story 6.6)
 
-Also a Jira write, so it goes through the gate first. "Reaction: flaky" (`n8n/workflows/reaction-flaky.json`):
+Also a Jira write, so it needs `JIRA_WRITES_ENABLED` = `true` first. "Reaction: flaky" (`n8n/workflows/reaction-flaky.json`):
 1. reads `flows/inventory.yaml` and `flows/quarantine.yaml` from `main`. If the test is **already quarantined**, or its flow has **no owner** (missing or "TBD"), it creates nothing. W3b records that and replies: "Nothing was created: this test is already in the quarantine list." or "…the flow `<flow>` has no owner in the flow inventory. QA lead to add it to the inventory, then undo ↩️ and react 🔁 again.";
 2. builds the rerun evidence from that night's `failure-list` ("Failed 2 of the last 4 nights, passed on retry.");
 3. creates the owner's **Task** in PM first (S18): "Flaky test: <test>", label `filed-via-qa-bot`, **due date two weeks from today**, the owner, "Marked flaky by <name>" with the evidence, "A quarantine PR will be opened; the test keeps gating until QA merges it.", and links. Reporter works as for 🐞 (`account_map`, or the "Filed by" comment);
@@ -729,7 +739,7 @@ A QA member reacts ↩️ on a message whose decision is handled. **Nothing is e
 | ✅ questions | a follow-up comment "These clarification questions were withdrawn by <name> via Slack. Please ignore them." |
 | 🌩️ / 🙈 | the decision is marked reversed |
 
-Undos that change Jira go through the gate (`jira-write`). While AI work is off, or if Jira fails, nothing changes; the undo is retried while the 24 hours last, and a Jira failure goes to W0. W3b then marks the decision undone (`undone_at`, `undone_by`), replies S6 "Undone by @member. <what was reversed>. Nothing was deleted. You can now react again on the message above." and writes an audit entry (`undo-<action>`, the member's email). The message is then open for one new valid reaction.
+Undos that change Jira also need `JIRA_WRITES_ENABLED` = `true`. While it is off, or if Jira fails, nothing changes; the undo is retried while the 24 hours last, and a Jira failure goes to W0. W3b then marks the decision undone (`undone_at`, `undone_by`), replies S6 "Undone by @member. <what was reversed>. Nothing was deleted. You can now react again on the message above." and writes an audit entry (`undo-<action>`, the member's email). The message is then open for one new valid reaction.
 
 **More than 24 hours after the action:** nothing changes, and W3b replies once: "Undo is closed for this message (more than 24 hours). Ask the QA lead to change <PM-… in Jira, or the decision> by hand."
 

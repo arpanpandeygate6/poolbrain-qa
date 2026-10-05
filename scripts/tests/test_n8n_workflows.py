@@ -340,6 +340,7 @@ def test_kill_switch(value, last, enabled, transition):
         assert out["header"] == "AI work is off" and out["kind"] == "alert"
         assert out["todo_label"] == "To turn it back on"
         assert "Still running: nightly and smoke tests" in out["body"]
+        assert "write to Jira" not in out["body"] and "`JIRA_WRITES_ENABLED` is `true`" in out["body"]
     if transition == "on":
         assert out["header"] == "AI work is on again" and out["kind"] == "info"
 
@@ -1464,13 +1465,37 @@ def test_send_questions_comment():
 
 
 @needs_node
-def test_w3b_jira_decisions_wait_for_the_gate():
+def test_w3b_jira_decisions_are_only_bug_flaky_and_approve():
     later = datetime.fromtimestamp(datetime.now(UTC).timestamp() + 600, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     decisions = [{**mapped(1), "action": "bug"}, {**mapped(2, kind="questions"), "action": "approve"},
                  {**mapped(3), "action": "environment"}, {**mapped(4), "action": "bug", "jira_wait_until": later}]
     out = run_code(code_of(W3B, "Jira decisions").replace("$input.all()", json.dumps([{"json": d} for d in decisions])), {})
-    assert [(o["map_id"], o["gate"]["action"], o["gate"]["target"]) for o in out] == [(1, "jira-write", "reaction-1"),
-                                                                                    (2, "jira-write", "reaction-2")]
+    assert [(o["map_id"], o["action_kind"]) for o in out] == [(1, "bug"), (2, "approve")]
+
+
+@needs_node
+@pytest.mark.parametrize("value, allowed", [("true", True), ("false", False), ("TRUE", False), (None, False)])
+def test_w3b_jira_writes_follow_their_own_switch(value, allowed):
+    read = {"value": value} if value is not None else {"error": {"message": "404"}}
+    for name in ("Jira switch", "Undo Jira switch"):
+        code = code_of(W3B, name).replace("$input.all()", json.dumps([{"json": {"map_id": 1}}, {"json": {"map_id": 2}}]))
+        assert run_code(code, {}, {"Read JIRA_WRITES_ENABLED": read}) == [{"allowed": allowed}] * 2
+
+
+def test_w3b_jira_writes_do_not_use_the_ai_gate():
+    c = W3B["connections"]
+    assert c["Got the lock?"]["main"][0][0]["node"] == "Read JIRA_WRITES_ENABLED"
+    assert c["Read JIRA_WRITES_ENABLED"]["main"][0][0]["node"] == "Load messages"
+    read = next(n for n in W3B["nodes"] if n["name"] == "Read JIRA_WRITES_ENABLED")
+    assert read["parameters"]["url"].endswith("/actions/variables/JIRA_WRITES_ENABLED")
+    assert read["onError"] == "continueRegularOutput" and read["alwaysOutputData"] is True
+    assert c["Jira decisions"]["main"][0][0]["node"] == "Jira switch"
+    assert c["Jira switch"]["main"][0][0]["node"] == "Allowed Jira actions"
+    assert c["Jira undos"]["main"][0][0]["node"] == "Undo Jira switch"
+    assert c["Undo Jira switch"]["main"][0][0]["node"] == "Allowed undos"
+    # Only the quarantine start (a GitHub workflow) still asks the AI gate.
+    gated = [n["name"] for n in W3B["nodes"] if n["parameters"].get("workflowId", {}).get("value") == "gateCheck0000001"]
+    assert gated == ["Quarantine gate"]
 
 
 @needs_node
@@ -1650,7 +1675,6 @@ def test_undo_routes_jira_and_local_undos():
              {**undo_candidate("bug"), "mode": "closed"}]
     jira = run_code(code_of(W3B, "Jira undos").replace("$input.all()", json.dumps([{"json": u} for u in undos])), {})
     assert [j["decision"]["action"] for j in jira] == ["bug", "approve"]
-    assert jira[0]["gate"] == {"action": "jira-write", "workflow": "", "target": "undo-40", "payload": {"decision_id": 40}}
     full = [{**u, "undo_actor": "UQB", "undo_name": "Ravi", "undo_email": "ravi@gate6.com"} for u in undos]
     nodes = {"Undos": full, "Allowed undos": [{**full[0], "action": "bug", "jira_key": "PM-9"}],
              "Reverse in Jira": [{"what": "PM-9 marked as undone in Jira (moved to Won't Do)"}]}

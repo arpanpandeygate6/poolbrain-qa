@@ -172,6 +172,34 @@
       }
     },
     {
+      "id": "e3b2c3d4-0001-4000-8000-000000000090",
+      "name": "Read JIRA_WRITES_ENABLED",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        150
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.github.com/repos/{{ $('Settings').first().json.repo }}/actions/variables/JIRA_WRITES_ENABLED",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "githubAppApi",
+        "options": {}
+      },
+      "credentials": {
+        "githubAppApi": {
+          "id": "rtFV51PZnrrirWP0",
+          "name": "qa-relay"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
       "id": "e3b2c3d4-0001-4000-8000-000000000007",
       "name": "Load messages",
       "type": "n8n-nodes-base.postgres",
@@ -993,12 +1021,12 @@
         50
       ],
       "parameters": {
-        "jsCode": "// 🐞 Bug, 🔁 Flaky and ✅ Approve write to Jira: through the gate (a Jira write, AR-11).\n// A reaction the gate held back is asked about again after its wait.\nconst now = Date.now();\nreturn $input.all()\n  .filter((d) => ['bug', 'flaky', 'approve'].includes(d.json.action))\n  .filter((d) => !d.json.jira_wait_until || Date.parse(d.json.jira_wait_until) <= now)\n  .map((d) => ({ json: { ...d.json, action_kind: d.json.action,\n    gate: { action: 'jira-write', workflow: '', target: `reaction-${d.json.map_id}`, payload: { map_id: d.json.map_id, reaction: d.json.action } } } }));\n"
+        "jsCode": "// 🐞 Bug, 🔁 Flaky and ✅ Approve write to Jira, only while the Jira switch is on.\n// A reaction that an older gate check held back still waits until then.\nconst now = Date.now();\nreturn $input.all()\n  .filter((d) => ['bug', 'flaky', 'approve'].includes(d.json.action))\n  .filter((d) => !d.json.jira_wait_until || Date.parse(d.json.jira_wait_until) <= now)\n  .map((d) => ({ json: { ...d.json, action_kind: d.json.action } }));\n"
       }
     },
     {
-      "id": "e3b2c3d4-0001-4000-8000-000000000033",
-      "name": "To the gate",
+      "id": "e3b2c3d4-0001-4000-8000-000000000091",
+      "name": "Jira switch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -1006,82 +1034,7 @@
         50
       ],
       "parameters": {
-        "jsCode": "return $input.all().map((d) => ({ json: d.json.gate }));\n"
-      }
-    },
-    {
-      "id": "e3b2c3d4-0001-4000-8000-000000000034",
-      "name": "Gate",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.2,
-      "position": [
-        3000,
-        50
-      ],
-      "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "gateCheck0000001",
-          "mode": "id"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "action": "={{ $json.action }}",
-            "workflow": "={{ $json.workflow }}",
-            "target": "={{ $json.target }}",
-            "payload": "={{ $json.payload }}"
-          },
-          "matchingColumns": [],
-          "schema": [
-            {
-              "id": "action",
-              "displayName": "action",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "string",
-              "removed": false
-            },
-            {
-              "id": "workflow",
-              "displayName": "workflow",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "string",
-              "removed": false
-            },
-            {
-              "id": "target",
-              "displayName": "target",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "string",
-              "removed": false
-            },
-            {
-              "id": "payload",
-              "displayName": "payload",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "object",
-              "removed": false
-            }
-          ],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
-        "mode": "each",
-        "options": {
-          "waitForSubWorkflow": true
-        }
+        "jsCode": "// People's reactions are not AI work, so they don't use the AI gate (decision\n// 5 Oct 2026). They write to Jira only while the repository variable\n// JIRA_WRITES_ENABLED is exactly `true`. Otherwise (missing, any other value,\n// or a failed read) nothing is written: the reaction stays unhandled and is\n// read again on the next run.\nconst on = $('Read JIRA_WRITES_ENABLED').first().json.value === 'true';\nreturn $input.all().map(() => ({ json: { allowed: on } }));\n"
       }
     },
     {
@@ -2090,12 +2043,12 @@
         380
       ],
       "parameters": {
-        "jsCode": "// Undoing 🐞, 🔁 or ✅ changes Jira: through the gate (a Jira write).\nreturn $input.all().filter((u) => u.json.mode === 'undo' && ['bug', 'flaky', 'approve'].includes(u.json.decision.action)\n  && (u.json.decision.jira_key || u.json.decision.action !== 'flaky'))\n  .map((u) => ({ json: { ...u.json, gate: { action: 'jira-write', workflow: '', target: `undo-${u.json.decision.id}`,\n    payload: { decision_id: u.json.decision.id } } } }));\n"
+        "jsCode": "// Undoing 🐞, 🔁 or ✅ changes Jira, only while the Jira switch is on.\nreturn $input.all().filter((u) => u.json.mode === 'undo' && ['bug', 'flaky', 'approve'].includes(u.json.decision.action)\n  && (u.json.decision.jira_key || u.json.decision.action !== 'flaky'));\n"
       }
     },
     {
-      "id": "e3b2c3d4-0001-4000-8000-000000000070",
-      "name": "Undo to the gate",
+      "id": "e3b2c3d4-0001-4000-8000-000000000092",
+      "name": "Undo Jira switch",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -2103,82 +2056,7 @@
         380
       ],
       "parameters": {
-        "jsCode": "return $input.all().map((u) => ({ json: u.json.gate }));\n"
-      }
-    },
-    {
-      "id": "e3b2c3d4-0001-4000-8000-000000000071",
-      "name": "Undo gate",
-      "type": "n8n-nodes-base.executeWorkflow",
-      "typeVersion": 1.2,
-      "position": [
-        3000,
-        380
-      ],
-      "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "gateCheck0000001",
-          "mode": "id"
-        },
-        "workflowInputs": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "action": "={{ $json.action }}",
-            "workflow": "={{ $json.workflow }}",
-            "target": "={{ $json.target }}",
-            "payload": "={{ $json.payload }}"
-          },
-          "matchingColumns": [],
-          "schema": [
-            {
-              "id": "action",
-              "displayName": "action",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "string",
-              "removed": false
-            },
-            {
-              "id": "workflow",
-              "displayName": "workflow",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "string",
-              "removed": false
-            },
-            {
-              "id": "target",
-              "displayName": "target",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "string",
-              "removed": false
-            },
-            {
-              "id": "payload",
-              "displayName": "payload",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "canBeUsedToMatch": true,
-              "type": "object",
-              "removed": false
-            }
-          ],
-          "attemptToConvertTypes": false,
-          "convertFieldsToString": false
-        },
-        "mode": "each",
-        "options": {
-          "waitForSubWorkflow": true
-        }
+        "jsCode": "// People's reactions are not AI work, so they don't use the AI gate (decision\n// 5 Oct 2026). They write to Jira only while the repository variable\n// JIRA_WRITES_ENABLED is exactly `true`. Otherwise (missing, any other value,\n// or a failed read) nothing is written: the reaction stays unhandled and is\n// read again on the next run.\nconst on = $('Read JIRA_WRITES_ENABLED').first().json.value === 'true';\nreturn $input.all().map(() => ({ json: { allowed: on } }));\n"
       }
     },
     {
@@ -2893,7 +2771,7 @@
       "main": [
         [
           {
-            "node": "Load messages",
+            "node": "Read JIRA_WRITES_ENABLED",
             "type": "main",
             "index": 0
           }
@@ -3056,29 +2934,7 @@
       "main": [
         [
           {
-            "node": "Undo to the gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Undo to the gate": {
-      "main": [
-        [
-          {
-            "node": "Undo gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Undo gate": {
-      "main": [
-        [
-          {
-            "node": "Allowed undos",
+            "node": "Undo Jira switch",
             "type": "main",
             "index": 0
           }
@@ -3380,29 +3236,7 @@
       "main": [
         [
           {
-            "node": "To the gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "To the gate": {
-      "main": [
-        [
-          {
-            "node": "Gate",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Gate": {
-      "main": [
-        [
-          {
-            "node": "Allowed Jira actions",
+            "node": "Jira switch",
             "type": "main",
             "index": 0
           }
@@ -3599,6 +3433,39 @@
         [
           {
             "node": "Write decision audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read JIRA_WRITES_ENABLED": {
+      "main": [
+        [
+          {
+            "node": "Load messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira switch": {
+      "main": [
+        [
+          {
+            "node": "Allowed Jira actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Undo Jira switch": {
+      "main": [
+        [
+          {
+            "node": "Allowed undos",
             "type": "main",
             "index": 0
           }
