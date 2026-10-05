@@ -1,0 +1,5 @@
+# The pilot (Story 8.1). Fill in before it starts; don't change during it.
+start: ""            # YYYY-MM-DD, first day (IST)
+end: ""              # YYYY-MM-DD, last day (IST)
+major_edit_rule: "label major-edits added by the reviewer before merge"
+agreed_by: ""        # QA lead and release owner, with the date

@@ -817,3 +817,25 @@ After the failure list, the nightly's **Failure list** job builds `triage-input`
 - A breaking change bumps `schema_version`, and consumers reject versions they don't know.
 - Producers validate before saving: `python scripts/validate_contract.py <name> <file>`, or call `validate()` from Python.
 - The `ci` check validates every sample (`--samples`), so each schema needs at least one sample.
+
+## Pilot numbers (Story 8.1)
+
+The two-week pilot measures three things against the bars in Story 8.2. `pilot/README.md` explains the sheet. In short:
+
+1. **Before the start**, the QA lead fills in `pilot/pilot.yaml` (start and end dates, who agreed). The **major-edit rule** is written there and in `pilot/README.md`: a reviewer adds the label **`major-edits`** before merging an agent PR they changed by more than about a quarter. It doesn't change during the pilot.
+2. **During the pilot**, through PRs:
+   - QA members add each job-creation regression run's manual minutes to `pilot/manual-time.csv`, as `baseline` (before) or `pilot` (during), with date and recorder;
+   - the QA lead marks agree or disagree in `pilot/triage-marks.csv` for failures triage called Test defect or Unknown;
+   - anyone notes data gaps (n8n down, Claude Max limits hit, UAT down) in `pilot/gaps.csv`.
+3. **At the end**, the n8n maintainer runs `n8n/pilot-export.sh <start> <end> > pilot/decisions.json` (read-only: each failure message with its suggested class and final reaction after any undo) and commits it.
+4. **Actions → pilot-numbers → Run workflow** (`.github/workflows/pilot-numbers.yml`, any time) runs `scripts/pilot_numbers.py`:
+   - **acceptance:** the agent's PR 1s and PR 2s created during the pilot, merged without `major-edits`, merged with it, or closed (rejected); open PRs are listed, not counted;
+   - **triage agreement:** the final reaction matches the suggestion (🐞 Product defect, 🔁 Flaky, 🌩️ Environment; 🙈 never matches), plus the QA marks for Test defect and Unknown. Unclassified messages, ones with no reaction, and unmarked ones are listed, not counted;
+   - **time saved:** 1 − average pilot minutes ÷ average baseline minutes.
+   Each measure is shown against its bar (70%, 80%, 50%) as met, not met or no data, with every PR and message behind it and the gaps. The job summary shows it, and the artifact `pilot-numbers` keeps it for 90 days. That is the input for the report and decision (Story 8.2).
+
+**Checked on 5 Oct 2026:**
+- Unit tests: PR counting (with major edits, rejected, open, not the agent's, before the pilot), the agreement rules (each reaction, 🙈, QA marks, unclassified, no reaction), time saved, the report, and the "dates first" check.
+- `n8n/pilot-export.sh` ran on the real database: no failure messages yet, and a bad date was refused.
+
+**Artifact actions updated (5 Oct 2026):** `actions/upload-artifact` v4 → v7 and `actions/download-artifact` v4 → v8, which run on Node.js 24 and so clear the "Node.js 20 is deprecated" warning. Their release notes were checked: artifacts are still zipped (n8n and the scripts read them as zip), hidden files are still left out, `artifact-url` is unchanged, and downloads by name or pattern work as before.
