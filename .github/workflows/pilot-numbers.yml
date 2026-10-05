@@ -1,0 +1,43 @@
+# pilot-numbers (Story 8.1): the pilot's three measures against their bars, from
+# the agent PRs on GitHub and the sheet in pilot/ (including pilot/decisions.json,
+# exported from n8n with n8n/pilot-export.sh). Actions → pilot-numbers → Run
+# workflow, any time during or after the pilot. Reads only; changes nothing.
+
+name: pilot-numbers
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  pilot-numbers:
+    name: pilot-numbers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - name: Install YAML
+        run: pip install -q "$(grep -i '^PyYAML==' api-tests/requirements.txt)"
+
+      - name: Pilot numbers
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/pilot_numbers.py --pilot-dir pilot --fetch-prs --out "$RUNNER_TEMP/pilot-numbers.md"
+
+      - name: Save the numbers
+        uses: actions/upload-artifact@v7
+        with:
+          name: pilot-numbers
+          path: ${{ runner.temp }}/pilot-numbers.md
+          retention-days: 90

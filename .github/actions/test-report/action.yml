@@ -39,14 +39,14 @@ runs:
     - name: Upload the Allure report
       id: upload-report
       if: steps.generate.outputs.has-results == 'true'
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.name }}-allure-report-${{ github.run_id }}-${{ github.run_attempt }}
         path: reports/allure-report/
         retention-days: 30
 
     - name: Upload raw results, Playwright report, screenshots and traces
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.name }}-test-output-${{ github.run_id }}-${{ github.run_attempt }}
         retention-days: 30

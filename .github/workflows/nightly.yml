@@ -133,7 +133,7 @@ jobs:
       # Per-test results, kept so later runs can show each test's last 7 nights (Story 2.4).
       - name: Upload per-test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-results-${{ github.run_id }}-${{ github.run_attempt }}
           retention-days: 30
@@ -174,7 +174,7 @@ jobs:
         run: pip install "$(grep -i '^jsonschema==' api-tests/requirements.txt)" "$(grep -i '^PyYAML==' api-tests/requirements.txt)"
 
       - name: Get tonight's per-test results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: nightly-results-${{ github.run_id }}-*
           merge-multiple: true
@@ -211,7 +211,7 @@ jobs:
             --out "$RUNNER_TEMP/failure-list.json"
 
       - name: Save failure-list
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: failure-list
           path: ${{ runner.temp }}/failure-list.json
@@ -222,7 +222,7 @@ jobs:
       # files are read from the test output; its screenshots, traces and videos never are.
       - name: Get tonight's raw test results
         if: success() || failure()
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: nightly-test-output-${{ github.run_id }}-*
           merge-multiple: true
@@ -241,7 +241,7 @@ jobs:
 
       - name: Save triage-input
         if: success() || failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: triage-input
           path: ${{ runner.temp }}/triage-input.json
@@ -268,7 +268,7 @@ jobs:
 
       - name: Save nightly-summary
         if: success() || failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-summary
           path: ${{ runner.temp }}/nightly-summary.json

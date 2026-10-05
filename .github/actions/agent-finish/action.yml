@@ -30,7 +30,7 @@ runs:
       run: python scripts/agent_gate.py finish --ticket "$TICKET" --status "$STATUS" --reason "$REASON" --pr-url "$PR_URL"
 
     - name: Save run-outcome
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: run-outcome
         path: ${{ runner.temp }}/run-outcome.json
