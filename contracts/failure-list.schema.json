@@ -93,6 +93,11 @@
           "flaky_candidate": {
             "type": "boolean",
             "description": "True for tests that passed on retry."
+          },
+          "cases": {
+            "type": "integer",
+            "minimum": 2,
+            "description": "How many parametrized cases of this test had this status. Left out when only one did."
           }
         }
       }

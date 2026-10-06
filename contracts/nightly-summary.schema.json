@@ -179,6 +179,11 @@
           "description": "The Allure report artifact; empty when there is none."
         }
       }
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Where the tests ran, for messages: \"UAT\", or \"pretend site\" on the prototype. Older summaries have none (read as UAT)."
     }
   }
 }

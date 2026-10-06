@@ -111,8 +111,8 @@
     "case_file": "Case file"
   },
   "messages": {
-    "failure_list_header": "Nightly run failed: {count} {tests} (UAT, {date})",
-    "retry_only_header": "Nightly run passed with {count} {tests} passed on retry (UAT, {date})",
+    "failure_list_header": "Nightly run failed: {count} {tests} ({target}, {date})",
+    "retry_only_header": "Nightly run passed with {count} {tests} passed on retry ({target}, {date})",
     "passed_on_retry_section": "Passed on retry",
     "triage_live_line": "The agent is classifying these. Results appear in this thread.",
     "more_items": "and {count} more — see the run",

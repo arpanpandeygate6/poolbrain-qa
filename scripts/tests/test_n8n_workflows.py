@@ -225,7 +225,7 @@ def test_ready_notice_message():
     assert [o["key"] for o in out] == ["PM-1"]
     [n] = out
     assert n["kind"] == "info" and n["header"] == "PM-1 is ready for QA"
-    assert n["body"] == "*Fix &lt;b&gt;pay&lt;/b&gt; &amp; save*\nLatest UAT result: *FAILED* (uat-pr, 04 Oct 10:30 IST)."
+    assert n["body"] == "*Fix &lt;b&gt;pay&lt;/b&gt; &amp; save*\nLatest test result (UAT): *FAILED* (uat-pr, 04 Oct 10:30 IST)."
     assert n["links"] == [{"label": "Jira", "url": "https://jira.example/browse/PM-1"},
                           {"label": "Latest run", "url": "https://gh/u"}]
 
@@ -233,8 +233,21 @@ def test_ready_notice_message():
 @needs_node
 def test_ready_notice_without_any_uat_run():
     [n] = notices([{"issues": [{"key": "PM-3", "fields": {"summary": "T"}}]}])
-    assert n["body"] == "*T*\nNo UAT run yet."
+    assert n["body"] == "*T*\nNo test run yet (UAT)."
     assert n["links"] == [{"label": "Jira", "url": "https://jira.example/browse/PM-3"}]
+
+
+@needs_node
+def test_ready_notice_names_where_the_tests_ran():
+    settings = next(n for n in READY["nodes"] if n["name"] == "Settings")["parameters"]["assignments"]["assignments"]
+    assert next(a for a in settings if a["name"] == "test_target")["value"] == "pretend site"
+    nodes = {"Settings": {**SETTINGS, "test_target": "pretend site"}, "Already noticed": {"keys": []},
+             "nightly runs": {"workflow_runs": [gh_run("nightly.yml", "success", "2026-10-03T21:00:00Z", "https://gh/n")]},
+             "uat-pr runs": {"error": "404"}}
+    code = code_of(READY, "Notices to send").replace(
+        "$('Find tickets').all()", json.dumps([{"json": {"issues": [{"key": "PM-4", "fields": {"summary": "T"}}]}}]))
+    [n] = run_code(code, {}, nodes)
+    assert n["body"] == "*T*\nLatest test result (pretend site): *PASSED* (nightly, 04 Oct 02:30 IST)."
 
 
 @needs_node
@@ -463,7 +476,7 @@ def test_w4_failed_night():
     assert out["header"].startswith("Daily QA update — ") and out["header"].endswith(", 09:30 IST")
     assert out["kind"] == ""
     lines = out["body"].split("\n")
-    assert lines[0] == "Nightly UAT: *FAILED* — 212 passed, 3 failed, 1 passed on retry."
+    assert lines[0] == "Nightly (UAT): *FAILED* — 212 passed, 3 failed, 1 passed on retry."  # an older summary has no target
     assert lines[1] == "Coverage: 14 of 40 regression flows automated (35%)."
     assert lines[2] == "Flaky rate (last 1 night): 0.5%."
     assert "*Failures and decisions*" in lines
@@ -523,6 +536,14 @@ def test_w4_says_when_decisions_could_not_be_read():
     assert "• `test_a` — FAILED — no decision yet" in out["body"]
     assert "Decisions: not available (the audit database didn't answer)." in out["body"]
     assert "Decisions: not available" not in daily_update([night(9)], decisions=None)["body"]
+
+
+@needs_node
+def test_w4_names_where_the_tests_ran():
+    out = daily_update([{**night(9, "not-run"), "target": "pretend site"}])
+    assert out["body"].startswith("Nightly (pretend site): not run.")
+    out = daily_update([{**night(9), "target": "pretend site"}])
+    assert out["body"].startswith("Nightly (pretend site): *PASSED* — 100 passed")
 
 
 @needs_node
@@ -1166,6 +1187,14 @@ def test_w3_plain_night_explains_why_and_posts_every_failure():
 
 
 @needs_node
+def test_w3_says_how_many_parametrized_cases_failed():
+    fl = {**FAILURE_LIST, "failures": [{**FAILURE_LIST["failures"][0], "cases": 3}, *FAILURE_LIST["failures"][1:]]}
+    msgs = w3_messages(night_of("fallback", reason="plain", triage_run_id=""), failure_list=fl)
+    assert msgs[1]["body"].endswith("Status: FAILED (3 cases).")
+    assert "cases" not in msgs[2]["body"]
+
+
+@needs_node
 def test_w3_retry_skips_what_was_posted_and_long_lists_shorten_ids():
     first = FAILURE_LIST["failures"][0]["test_id"]
     msgs = w3_messages(night_of("fallback", posted=["s3", f"test:{first}"], reason="capped"))
@@ -1586,7 +1615,8 @@ def test_flaky_owner_ticket():
     assert out["evidence"] == "Failed 2 of the last 4 nights, passed on retry."
     text = json.dumps(fields["description"])
     assert "Owner: Ravi (from the flow inventory)." in text and "Marked flaky by Asha. Failed 2 of the last 4 nights" in text
-    assert "the test keeps gating until QA merges it" in text
+    assert "only while AI work is on; otherwise a QA member adds the test to flows/quarantine.yaml in a PR" in text
+    assert "The test keeps gating until QA merges the quarantine PR." in text
     no_history, _ = build_task()
     assert no_history["evidence"].startswith("No retry pass or earlier failure recorded")
 
@@ -1611,7 +1641,9 @@ def test_w3b_flaky_replies_and_queue():
             {**base, "map_id": 3, "stop": "already-quarantined", "jira_key": "", "url": ""}]
     rows = [{"json": {"id": i}} for i in (1, 2, 3)]
     out = run_code(code_of(W3B, "Jira replies").replace("$input.all()", json.dumps(rows)), {}, {"Jira results": done})
-    assert out[0]["body"] == "Quarantine requested by <@UQA>. Owner ticket PM-77 created.\nThe test keeps gating until QA merges the quarantine PR."
+    assert out[0]["body"] == ("Quarantine requested by <@UQA>. Owner ticket PM-77 created.\n"
+                              "The quarantine PR opens by itself only while AI work is on; otherwise a QA member adds the test to "
+                              "`flows/quarantine.yaml` in a PR. The test keeps gating until QA merges the quarantine PR.")
     assert out[1]["body"].startswith("<@UQA>: Nothing was created: the flow `job-creation` has no owner in the flow inventory.")
     assert out[2]["body"] == "<@UQA>: Nothing was created: this test is already in the quarantine list."
     queued = run_code(code_of(W3B, "To queue"), {}, {"Jira results": done, "Record Jira decision": [{"id": 1}, {"id": 2}, {"id": None}]})
