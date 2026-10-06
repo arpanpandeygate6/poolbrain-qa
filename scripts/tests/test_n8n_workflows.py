@@ -200,6 +200,13 @@ def test_ready_notice_status_words_match_vocabulary():
     assert f"failure: '{VOCABULARY['test_status']['failed']}'" in code
 
 
+def test_ready_notice_counts_only_nightly_runs_on_main():
+    # A nightly started by hand on another branch (for example a demo with
+    # failing tests) must not become a ticket's "Latest UAT result".
+    url = next(n for n in READY["nodes"] if n["name"] == "nightly runs")["parameters"]["url"]
+    assert "/workflows/nightly.yml/runs?branch=main&" in url
+
+
 def test_ready_notice_reads_only_key_and_title_from_jira():
     find = next(n for n in READY["nodes"] if n["name"] == "Find tickets")
     params = {p["name"]: p["value"] for p in find["parameters"]["queryParameters"]["parameters"]}
