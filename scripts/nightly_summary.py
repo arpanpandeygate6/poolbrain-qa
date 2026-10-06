@@ -62,7 +62,7 @@ def coverage_of(inventory: dict, tests: list[dict], results: list[dict], quarant
 
 
 def build(results: list[dict], tests: list[dict], inventory: dict, quarantine: list[dict], *, run_id: int,
-          event: str, started_at: str, tests_result: str, run_url: str, report_url: str) -> dict:
+          event: str, started_at: str, tests_result: str, run_url: str, report_url: str, target: str = "UAT") -> dict:
     counts = counts_of(results)
     quarantine = [
         {"test_id": e["test_id"], "owner": str(e.get("owner", "")), "jira": str(e.get("jira", "")), "deadline": str(e.get("deadline", ""))}
@@ -73,6 +73,7 @@ def build(results: list[dict], tests: list[dict], inventory: dict, quarantine: l
         "nightly_run_id": run_id,
         "event": event,
         "started_at": started_at,
+        "target": target,
         "status": status_of(tests_result, results, counts),
         "counts": counts,
         "coverage": coverage_of(inventory, tests, results, {e["test_id"] for e in quarantine}),
@@ -100,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tests-result", required=True, help="the tests job's result: success, failure, cancelled")
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--report-url", default="")
+    parser.add_argument("--target", default="UAT", help='where the tests ran: "UAT", or "pretend site" on the prototype')
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -108,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     summary = build(
         _load_json(args.results_json), _load_json(args.tests_json), inventory, quarantine,
         run_id=args.run_id, event=args.event, started_at=args.started_at, tests_result=args.tests_result,
-        run_url=args.run_url, report_url=args.report_url,
+        run_url=args.run_url, report_url=args.report_url, target=args.target,
     )
     try:
         validate("nightly-summary", summary)

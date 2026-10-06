@@ -24,6 +24,25 @@ RESULTS = [
 ]
 
 
+def test_parametrized_cases_become_one_entry_per_test():
+    # Test IDs leave out [parameter], so these are three cases of one test.
+    cases = [rec(API, "failed", "FAILED", 2), rec(API, "failed", "FAILED", 3), rec(API, "passed", "PASSED ON RETRY", 2),
+             rec(UI, "passed", "PASSED ON RETRY", 2), rec(UI, "passed", "PASSED ON RETRY", 2)]
+    entries = failures_from(cases)
+    assert [(e["test_id"], e["status"], e.get("cases"), e["attempts"], e["flaky_candidate"]) for e in entries] == [
+        (API, "failed", 2, 3, False),
+        (UI, "passed-on-retry", 2, 2, True),
+    ]
+    assert "cases" not in failures_from([rec(API, "failed", "FAILED", 2)])[0]
+    _, blocks = build_message(load_vocabulary(), with_history(entries, []), "d", "", "", False)
+    assert f"*FAILED*  `{API}`  (flow `job-creation`, 2 cases)" in blocks[1]["text"]["text"]
+
+
+def test_header_names_where_the_tests_ran():
+    _, blocks = build_message(load_vocabulary(), with_history(failures_from(RESULTS), []), "d", "", "", False, "pretend site")
+    assert blocks[0]["text"]["text"] == "Nightly run failed: 2 tests (pretend site, d)"
+
+
 def test_failures_from_picks_and_orders():
     entries = failures_from(RESULTS)
     assert [(e["test_id"], e["status"], e["flaky_candidate"]) for e in entries] == [

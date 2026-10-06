@@ -25,6 +25,13 @@ ARGS = {"run_id": 7, "event": "schedule", "started_at": "2026-10-03T21:00:12Z", 
         "run_url": "https://github.com/o/r/actions/runs/7", "report_url": ""}
 
 
+def test_summary_says_where_the_tests_ran():
+    assert build([], TESTS, INVENTORY, [], **ARGS)["target"] == "UAT"
+    summary = build([], TESTS, INVENTORY, [], **ARGS, target="pretend site")
+    assert summary["target"] == "pretend site"
+    validate("nightly-summary", summary)
+
+
 def test_passed_night():
     results = [result("test_login.py::test_login", "passed"), result("test_jobs.py::test_create", "passed")]
     summary = build(results, TESTS, INVENTORY, [], **ARGS)

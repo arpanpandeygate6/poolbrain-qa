@@ -38,20 +38,33 @@ def load_vocabulary(path: Path = CONTRACTS / "vocabulary.json") -> dict:
 
 
 def failures_from(results: list[dict]) -> list[dict]:
-    """Failed, quarantined and passed-on-retry tests, in that order."""
+    """Failed, quarantined and passed-on-retry tests, in that order, one entry per test ID.
+
+    Test IDs leave out a parametrized case's [parameter] (AR-19), so the cases of
+    one test share an ID. They become one entry with the most serious status and
+    `cases`, the number of cases with that status (only when more than one), so
+    each test gets one Slack message and one decision.
+    """
     status_for = {"FAILED": "failed", "QUARANTINED": "quarantined", "PASSED ON RETRY": "passed-on-retry"}
     order = list(status_for.values())
-    entries = [
-        {
-            "test_id": r["test_id"],
-            "flow_id": r.get("flow_id") or "",
-            "attempts": max(1, int(r.get("attempts", 1))),
-            "status": status_for[r["label"]],
-            "flaky_candidate": r["label"] == "PASSED ON RETRY",
+    by_test: dict[str, list[dict]] = {}
+    for r in results:
+        if r.get("label") in status_for:
+            by_test.setdefault(r["test_id"], []).append(r)
+    entries = []
+    for test_id, runs in by_test.items():
+        status = min((status_for[r["label"]] for r in runs), key=order.index)
+        same = [r for r in runs if status_for[r["label"]] == status]
+        entry = {
+            "test_id": test_id,
+            "flow_id": next((r.get("flow_id") for r in runs if r.get("flow_id")), ""),
+            "attempts": max(max(1, int(r.get("attempts", 1))) for r in runs),
+            "status": status,
+            "flaky_candidate": status == "passed-on-retry",
         }
-        for r in results
-        if r.get("label") in status_for
-    ]
+        if len(same) > 1:
+            entry["cases"] = len(same)
+        entries.append(entry)
     return sorted(entries, key=lambda e: (order.index(e["status"]), e["test_id"]))
 
 
@@ -95,16 +108,16 @@ def _tests(count: int) -> str:
 
 
 def build_message(
-    vocab: dict, failures: list[dict], date: str, run_url: str, report_url: str, triage_live: bool
+    vocab: dict, failures: list[dict], date: str, run_url: str, report_url: str, triage_live: bool, target: str = "UAT"
 ) -> tuple[str, list[dict]]:
     """Slack fallback text and Block Kit blocks (EXPERIENCE.md M1 layout)."""
     words, status, msg = vocab["link_labels"], vocab["test_status"], vocab["messages"]
     failed = [f for f in failures if f["status"] in ("failed", "quarantined")]
     retried = [f for f in failures if f["status"] == "passed-on-retry"]
     if failed:
-        header = msg["failure_list_header"].format(count=len(failed), tests=_tests(len(failed)), date=date)
+        header = msg["failure_list_header"].format(count=len(failed), tests=_tests(len(failed)), target=target, date=date)
     else:
-        header = msg["retry_only_header"].format(count=len(retried), tests=_tests(len(retried)), date=date)
+        header = msg["retry_only_header"].format(count=len(retried), tests=_tests(len(retried)), target=target, date=date)
 
     word_for = {
         "failed": status["failed"],
@@ -113,7 +126,11 @@ def build_message(
     }
 
     def lines(items: list[dict]) -> list[str]:
-        out = [f"*{word_for[f['status']]}*  `{f['test_id']}`  (flow `{f['flow_id'] or '-'}`)" for f in items[:MAX_LINES]]
+        out = [
+            f"*{word_for[f['status']]}*  `{f['test_id']}`  (flow `{f['flow_id'] or '-'}`"
+            + (f", {f['cases']} cases)" if f.get("cases") else ")")
+            for f in items[:MAX_LINES]
+        ]
         if len(items) > MAX_LINES:
             out.append(msg["more_items"].format(count=len(items) - MAX_LINES))
         return out
@@ -175,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-url", default="")
     parser.add_argument("--report-url", default="")
     parser.add_argument("--date", required=True, help='for the header, for example "02 Oct 02:30 IST"')
+    parser.add_argument("--target", default="UAT", help='where the tests ran, for the header: "UAT", or "pretend site" on the prototype')
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
 
@@ -186,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
 
     failures = with_history(failures, load_history(args.history_dir, args.run_id))
     triage_live = os.environ.get("TRIAGE_LIVE", "").lower() == "true"
-    text, blocks = build_message(load_vocabulary(), failures, args.date, args.run_url, args.report_url, triage_live)
+    text, blocks = build_message(load_vocabulary(), failures, args.date, args.run_url, args.report_url, triage_live, args.target)
 
     token, channel = os.environ.get("SLACK_BOT_TOKEN", ""), os.environ.get("SLACK_CHANNEL", "")
     if not (token and channel):
